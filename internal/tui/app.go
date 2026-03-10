@@ -25,6 +25,16 @@ type songLoadedMsg struct {
 	err     error
 }
 
+// gameReadyMsg is sent when audio player and game engine are ready.
+type gameReadyMsg struct {
+	player *audio.Player
+	engine *game.Engine
+	err    error
+}
+
+// returnToMenuMsg is sent after a delay to return from error screen to menu.
+type returnToMenuMsg struct{}
+
 // progressCollector safely collects progress messages from a background goroutine.
 type progressCollector struct {
 	mu       sync.Mutex
@@ -209,30 +219,34 @@ func (a *App) updateLoading(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			a.loading.addMessage(fmt.Sprintf("Error: %v", msg.err))
 			a.loading.setDone()
-			// Stay on loading screen for 3 seconds, then return to menu
 			return a, tea.Tick(3*time.Second, func(t time.Time) tea.Msg {
-				return songLoadedMsg{err: fmt.Errorf("returning to menu")}
+				return returnToMenuMsg{}
 			})
-		}
-		if a.loading.isDone() {
-			// This is the delayed return-to-menu after an error
-			a.state = game.StateMenu
-			return a, nil
 		}
 		a.songHash = msg.hash
 		return a, a.startGameplay(msg.drumMap)
+	case gameReadyMsg:
+		if msg.err != nil {
+			a.loading.addMessage(fmt.Sprintf("Error: %v", msg.err))
+			a.loading.setDone()
+			return a, tea.Tick(3*time.Second, func(t time.Time) tea.Msg {
+				return returnToMenuMsg{}
+			})
+		}
+		a.player = msg.player
+		a.engine = msg.engine
+		a.play = newPlayModel(a.cfg, a.engine, a.player, a.songName)
+		a.state = game.StatePlaying
+		return a, a.tickCmd()
+	case returnToMenuMsg:
+		a.state = game.StateMenu
+		return a, nil
 	case tickMsg:
 		// Drain progress messages from the collector
 		for _, msg := range a.progress.drain() {
 			a.loading.addMessage(msg)
 		}
 		a.loading.tick()
-
-		// Check if song is finished
-		if a.player != nil && a.player.IsFinished() {
-			return a, a.finishGame()
-		}
-
 		return a, a.tickCmd()
 	}
 	return a, nil
@@ -333,31 +347,29 @@ func (a *App) loadSongCmd(path string) tea.Cmd {
 }
 
 func (a *App) startGameplay(drumMap *analysis.DrumMap) tea.Cmd {
+	cfg := a.cfg
+	songHash := a.songHash
 	return func() tea.Msg {
 		player, err := audio.NewPlayer()
 		if err != nil {
-			return songLoadedMsg{err: fmt.Errorf("creating audio player: %w", err)}
+			return gameReadyMsg{err: fmt.Errorf("creating audio player: %w", err)}
 		}
 
 		if err := player.Load(
-			cacheNoDrumsPath(a.songHash),
-			cacheDrumsPath(a.songHash),
+			cacheNoDrumsPath(songHash),
+			cacheDrumsPath(songHash),
 		); err != nil {
 			player.Close()
-			return songLoadedMsg{err: fmt.Errorf("loading audio tracks: %w", err)}
+			return gameReadyMsg{err: fmt.Errorf("loading audio tracks: %w", err)}
 		}
 
 		if err := player.Start(); err != nil {
 			player.Close()
-			return songLoadedMsg{err: fmt.Errorf("starting playback: %w", err)}
+			return gameReadyMsg{err: fmt.Errorf("starting playback: %w", err)}
 		}
 
-		a.player = player
-		a.engine = game.NewEngine(a.cfg, drumMap, player)
-		a.play = newPlayModel(a.cfg, a.engine, player, a.songName)
-		a.state = game.StatePlaying
-
-		return tickMsg(time.Now())
+		engine := game.NewEngine(cfg, drumMap, player)
+		return gameReadyMsg{player: player, engine: engine}
 	}
 }
 
