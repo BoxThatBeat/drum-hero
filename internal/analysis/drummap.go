@@ -67,17 +67,19 @@ func Analyze(hash string, onProgress audio.ProgressFunc) (*DrumMap, error) {
 	onProgress("Detecting drum hits...")
 	onsets := DetectOnsets(audioData.Mono, audioData.SampleRate)
 
-	// Classify each onset
+	// Classify each onset (may return multiple types per onset for simultaneous hits)
 	onProgress(fmt.Sprintf("Classifying %d drum hits...", len(onsets)))
-	types := Classify(audioData.Mono, audioData.SampleRate, onsets)
+	typeSets := Classify(audioData.Mono, audioData.SampleRate, onsets)
 
-	// Build drum map
-	hits := make([]DrumHit, len(onsets))
+	// Build drum map — expand multi-type onsets into separate DrumHit entries
+	var hits []DrumHit
 	for i, onset := range onsets {
 		timeMs := float64(onset) / float64(audioData.SampleRate) * 1000.0
-		hits[i] = DrumHit{
-			TimeMs: timeMs,
-			Type:   types[i],
+		for _, dt := range typeSets[i] {
+			hits = append(hits, DrumHit{
+				TimeMs: timeMs,
+				Type:   dt,
+			})
 		}
 	}
 

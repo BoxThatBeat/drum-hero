@@ -25,10 +25,10 @@ type BandEnergy struct {
 	Total    float64
 }
 
-// Classify determines the drum type for each onset based on spectral analysis.
-// Returns a DrumType for each onset frame.
-func Classify(mono []float64, sampleRate int, onsets []int) []config.DrumType {
-	types := make([]config.DrumType, len(onsets))
+// Classify determines the drum type(s) for each onset based on spectral analysis.
+// Returns a slice of DrumType slices — each onset may produce multiple simultaneous types.
+func Classify(mono []float64, sampleRate int, onsets []int) [][]config.DrumType {
+	types := make([][]config.DrumType, len(onsets))
 	windowSamples := int(float64(classifyWindowMs) / 1000.0 * float64(sampleRate))
 
 	// Use next power of 2 for FFT
@@ -157,9 +157,10 @@ func computeEnvelope(mono []float64, onset, sampleRate int) EnvelopeFeatures {
 }
 
 // classifyFromFeatures classifies a drum hit based on spectral band energies and envelope.
-func classifyFromFeatures(energy BandEnergy, env EnvelopeFeatures) config.DrumType {
+// Returns one or more drum types for simultaneous hits (e.g. kick + hi-hat).
+func classifyFromFeatures(energy BandEnergy, env EnvelopeFeatures) []config.DrumType {
 	if energy.Total == 0 {
-		return config.Snare // fallback
+		return []config.DrumType{config.Snare} // fallback
 	}
 
 	// Normalize band energies to ratios
@@ -167,64 +168,138 @@ func classifyFromFeatures(energy BandEnergy, env EnvelopeFeatures) config.DrumTy
 	bassRatio := energy.Bass / energy.Total
 	lowMidRatio := energy.LowMid / energy.Total
 	midRatio := energy.Mid / energy.Total
-	highRatio := (energy.High + energy.VeryHigh) / energy.Total
 	highMidRatio := energy.HighMid / energy.Total
+	highRatio := (energy.High + energy.VeryHigh) / energy.Total
 
 	lowRatio := subBassRatio + bassRatio
 	allHighRatio := highRatio + highMidRatio
 
-	// Classification decision tree
+	// --- Simultaneous hit detection ---
+	// When a kick and hi-hat/cymbal play together, the onset has both
+	// strong sub-bass AND strong high-frequency energy.
+	hasKick := lowRatio > 0.3 && subBassRatio > 0.1
+	hasHighFreq := allHighRatio > 0.15
+
+	if hasKick && hasHighFreq {
+		high := classifyHighFreq(energy, env)
+		return []config.DrumType{config.Kick, high}
+	}
+
+	// --- Single instrument classification ---
+
 	// 1. Kick: dominant low frequency energy
 	if lowRatio > 0.5 && subBassRatio > 0.15 {
-		return config.Kick
+		return []config.DrumType{config.Kick}
+	}
+	// Secondary kick detection for deeper kicks
+	if lowRatio > 0.4 && subBassRatio > 0.12 && allHighRatio < 0.15 {
+		return []config.DrumType{config.Kick}
 	}
 
-	// 2. Hi-hat / Cymbal: dominant high frequency energy
-	if allHighRatio > 0.45 {
-		// Distinguish closed hi-hat (short decay) from open hi-hat / cymbal (long sustain)
-		if env.DecayRate > 4.0 {
-			// Fast decay = closed hi-hat
-			return config.ClosedHH
-		}
-		if energy.VeryHigh > energy.High {
-			// More shimmer = cymbal
-			if env.DecayRate < 1.5 {
-				return config.Cymbal
-			}
-			return config.OpenHH
-		}
-		// Default high = open hi-hat
-		return config.OpenHH
+	// 2. Hi-hat / Cymbal: dominant high frequency energy (lowered threshold)
+	if allHighRatio > 0.25 {
+		return []config.DrumType{classifyHighFreq(energy, env)}
 	}
 
-	// 3. Snare: mid-range with noise component (broad spectrum)
-	if midRatio+highMidRatio > 0.3 && lowMidRatio > 0.1 {
-		return config.Snare
+	// 3. Snare: broadband spectrum with mid-range content
+	// Snare wires create noise across mid and high-mid bands, distinguishing
+	// snare from toms which have concentrated low-mid energy.
+	//
+	// Key insight: snares have significant energy above 2kHz (highMid+high),
+	// while toms do not. Even a small amount of high-frequency content
+	// alongside low-mid body resonance indicates snare.
+	hasSnareNoise := highMidRatio > 0.05 || highRatio > 0.05
+	hasSnareBody := lowMidRatio > 0.08 || midRatio > 0.1
+
+	if hasSnareNoise && hasSnareBody {
+		return []config.DrumType{config.Snare}
 	}
 
-	// 4. Toms: mid-low frequencies with less noise than snare
+	// Snare with strong mid-range
+	if midRatio+highMidRatio > 0.2 && lowMidRatio > 0.08 {
+		return []config.DrumType{config.Snare}
+	}
+
+	// Broadband energy spread = snare (energy in 4+ bands)
+	significantBands := countSignificantBands(energy)
+	if significantBands >= 4 && midRatio > 0.08 {
+		return []config.DrumType{config.Snare}
+	}
+
+	// 4. Toms: low-mid dominant with NO significant high-frequency content
 	if lowMidRatio > 0.2 {
-		// Distinguish by pitch
-		if bassRatio > lowMidRatio {
-			return config.LowTom
+		// Only classify as tom if there's truly no high-frequency content
+		if bassRatio > lowMidRatio*1.3 {
+			return []config.DrumType{config.LowTom}
 		}
-		if lowMidRatio > midRatio {
-			return config.MidTom
+		if lowMidRatio > midRatio*1.5 {
+			return []config.DrumType{config.MidTom}
 		}
-		return config.HiTom
+		return []config.DrumType{config.HiTom}
 	}
 
-	// 5. Additional kick detection for deeper kicks
+	// 5. Fallbacks
 	if lowRatio > 0.35 {
-		return config.Kick
+		return []config.DrumType{config.Kick}
+	}
+	if highRatio > 0.15 {
+		return []config.DrumType{config.ClosedHH}
 	}
 
-	// 6. Fallback: if high energy, hi-hat; otherwise snare
-	if highRatio > 0.25 {
+	return []config.DrumType{config.Snare}
+}
+
+// classifyHighFreq distinguishes between closed hi-hat, open hi-hat, and cymbal
+// based on the high-frequency energy distribution and envelope.
+func classifyHighFreq(energy BandEnergy, env EnvelopeFeatures) config.DrumType {
+	// Fast decay = closed hi-hat (short, tight sound)
+	if env.DecayRate > 3.0 {
 		return config.ClosedHH
 	}
 
-	return config.Snare
+	// More very-high shimmer = cymbal
+	if energy.VeryHigh > energy.High {
+		if env.DecayRate < 1.5 {
+			return config.Cymbal
+		}
+		return config.OpenHH
+	}
+
+	// Moderate decay = open hi-hat
+	if env.DecayRate < 2.0 {
+		return config.OpenHH
+	}
+
+	return config.ClosedHH
+}
+
+// countSignificantBands counts how many frequency bands have > 5% of total energy.
+// A high count indicates broadband content (typical of snare).
+func countSignificantBands(energy BandEnergy) int {
+	threshold := energy.Total * 0.05
+	count := 0
+	if energy.SubBass > threshold {
+		count++
+	}
+	if energy.Bass > threshold {
+		count++
+	}
+	if energy.LowMid > threshold {
+		count++
+	}
+	if energy.Mid > threshold {
+		count++
+	}
+	if energy.HighMid > threshold {
+		count++
+	}
+	if energy.High > threshold {
+		count++
+	}
+	if energy.VeryHigh > threshold {
+		count++
+	}
+	return count
 }
 
 // rms computes root mean square of a signal.
