@@ -27,7 +27,7 @@ type BandEnergy struct {
 
 // Classify determines the drum type(s) for each onset based on spectral analysis.
 // Returns a slice of DrumType slices — each onset may produce multiple simultaneous types.
-func Classify(mono []float64, sampleRate int, onsets []int) [][]config.DrumType {
+func Classify(mono []float64, sampleRate int, onsets []int, cfg config.ClassifierConfig) [][]config.DrumType {
 	types := make([][]config.DrumType, len(onsets))
 	windowSamples := int(float64(classifyWindowMs) / 1000.0 * float64(sampleRate))
 
@@ -55,7 +55,7 @@ func Classify(mono []float64, sampleRate int, onsets []int) [][]config.DrumType 
 		env := computeEnvelope(mono, onset, sampleRate)
 
 		// Classify based on band energy ratios and envelope
-		types[i] = classifyFromFeatures(energy, env)
+		types[i] = classifyFromFeatures(energy, env, cfg)
 	}
 
 	return types
@@ -159,7 +159,7 @@ func computeEnvelope(mono []float64, onset, sampleRate int) EnvelopeFeatures {
 // classifyFromFeatures classifies a drum hit based on spectral band energies and envelope.
 // Returns one or more drum types for simultaneous hits (e.g. kick + hi-hat).
 // Only classifies into 5 types: Kick, Snare, ClosedHH, OpenHH, Cymbal.
-func classifyFromFeatures(energy BandEnergy, env EnvelopeFeatures) []config.DrumType {
+func classifyFromFeatures(energy BandEnergy, env EnvelopeFeatures, cfg config.ClassifierConfig) []config.DrumType {
 	if energy.Total == 0 {
 		return []config.DrumType{config.Snare} // fallback
 	}
@@ -175,11 +175,13 @@ func classifyFromFeatures(energy BandEnergy, env EnvelopeFeatures) []config.Drum
 	lowRatio := subBassRatio + bassRatio
 	allHighRatio := highRatio + highMidRatio
 
+	_ = bassRatio // used in ratios above
+
 	// --- Simultaneous hit detection ---
 	// When a kick and hi-hat/cymbal play together, the onset has both
 	// strong sub-bass AND strong high-frequency energy.
-	hasKick := lowRatio > 0.3 && subBassRatio > 0.1
-	hasHighFreq := allHighRatio > 0.15
+	hasKick := lowRatio > cfg.SimultaneousLow && subBassRatio > cfg.SimultaneousLow*0.33
+	hasHighFreq := allHighRatio > cfg.SimultaneousHigh
 
 	if hasKick && hasHighFreq {
 		high := classifyHighFreq(energy, env)
@@ -189,11 +191,11 @@ func classifyFromFeatures(energy BandEnergy, env EnvelopeFeatures) []config.Drum
 	// --- Single instrument classification ---
 
 	// 1. Kick: dominant low frequency energy
-	if lowRatio > 0.5 && subBassRatio > 0.15 {
+	if lowRatio > cfg.KickThreshold && subBassRatio > cfg.KickThreshold*0.3 {
 		return []config.DrumType{config.Kick}
 	}
 	// Secondary kick detection for deeper kicks
-	if lowRatio > 0.4 && subBassRatio > 0.12 && allHighRatio < 0.1 {
+	if lowRatio > cfg.KickThreshold*0.8 && subBassRatio > cfg.KickThreshold*0.24 && allHighRatio < 0.1 {
 		return []config.DrumType{config.Kick}
 	}
 
@@ -205,12 +207,12 @@ func classifyFromFeatures(energy BandEnergy, env EnvelopeFeatures) []config.Drum
 	significantBands := countSignificantBands(energy)
 	hasMidBody := lowMidRatio > 0.05 || midRatio > 0.1
 
-	if significantBands >= 4 && hasMidBody {
+	if significantBands >= cfg.SnareBands && hasMidBody {
 		return []config.DrumType{config.Snare}
 	}
 
 	// 3. Hi-hat / Cymbal: high frequency content, concentrated in upper bands
-	if allHighRatio > 0.2 {
+	if allHighRatio > cfg.HihatThreshold {
 		return []config.DrumType{classifyHighFreq(energy, env)}
 	}
 
@@ -220,10 +222,10 @@ func classifyFromFeatures(energy BandEnergy, env EnvelopeFeatures) []config.Drum
 	}
 
 	// 5. Fallbacks
-	if lowRatio > 0.3 {
+	if lowRatio > cfg.KickThreshold*0.6 {
 		return []config.DrumType{config.Kick}
 	}
-	if highRatio > 0.1 {
+	if highRatio > cfg.HihatThreshold*0.5 {
 		return []config.DrumType{config.ClosedHH}
 	}
 

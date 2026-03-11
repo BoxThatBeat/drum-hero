@@ -21,9 +21,10 @@ type DrumHit struct {
 
 // DrumMap is a list of drum hits for a song.
 type DrumMap struct {
-	Hits       []DrumHit `json:"hits"`
-	SampleRate int       `json:"sample_rate"`
-	DurationMs float64   `json:"duration_ms"`
+	Hits                []DrumHit `json:"hits"`
+	SampleRate          int       `json:"sample_rate"`
+	DurationMs          float64   `json:"duration_ms"`
+	ClassifierFingerprint string  `json:"classifier_fingerprint,omitempty"`
 }
 
 // Duration returns the total duration of the drum map.
@@ -43,16 +44,23 @@ func (dm *DrumMap) HitsInWindow(startMs, endMs float64) []DrumHit {
 }
 
 // Analyze detects drum hits from a separated drum track and classifies them.
-// If a cached drum map exists for the given hash, it is loaded instead.
-func Analyze(hash string, onProgress audio.ProgressFunc) (*DrumMap, error) {
+// If a cached drum map exists for the given hash with matching classifier config, it is loaded instead.
+func Analyze(hash string, cfg config.ClassifierConfig, onProgress audio.ProgressFunc) (*DrumMap, error) {
 	if onProgress == nil {
 		onProgress = func(string) {}
 	}
 
-	// Check for cached drum map
+	fingerprint := cfg.Fingerprint()
+
+	// Check for cached drum map with matching classifier config
 	if cache.HasDrumMap(hash) {
-		onProgress("Loading cached drum map...")
-		return LoadDrumMap(cache.DrumMapPath(hash))
+		dm, err := LoadDrumMap(cache.DrumMapPath(hash))
+		if err == nil && dm.ClassifierFingerprint == fingerprint {
+			onProgress("Loading cached drum map...")
+			return dm, nil
+		}
+		// Config changed — re-analyze
+		onProgress("Classifier settings changed, re-analyzing...")
 	}
 
 	// Load the separated drums track
@@ -69,7 +77,7 @@ func Analyze(hash string, onProgress audio.ProgressFunc) (*DrumMap, error) {
 
 	// Classify each onset (may return multiple types per onset for simultaneous hits)
 	onProgress(fmt.Sprintf("Classifying %d drum hits...", len(onsets)))
-	typeSets := Classify(audioData.Mono, audioData.SampleRate, onsets)
+	typeSets := Classify(audioData.Mono, audioData.SampleRate, onsets, cfg)
 
 	// Build drum map — expand multi-type onsets into separate DrumHit entries
 	var hits []DrumHit
@@ -84,9 +92,10 @@ func Analyze(hash string, onProgress audio.ProgressFunc) (*DrumMap, error) {
 	}
 
 	dm := &DrumMap{
-		Hits:       hits,
-		SampleRate: audioData.SampleRate,
-		DurationMs: audioData.Duration.Seconds() * 1000.0,
+		Hits:                  hits,
+		SampleRate:            audioData.SampleRate,
+		DurationMs:            audioData.Duration.Seconds() * 1000.0,
+		ClassifierFingerprint: fingerprint,
 	}
 
 	// Cache the drum map

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -78,6 +79,21 @@ type AudioConfig struct {
 	DrumUnmuteMs int `toml:"drum_unmute_ms"`
 }
 
+// ClassifierConfig holds thresholds for drum hit classification.
+// Tweak these to adjust how the classifier distinguishes drum types.
+type ClassifierConfig struct {
+	// KickThreshold: minimum low-frequency ratio (subBass+bass) to detect a kick (default 0.50)
+	KickThreshold float64 `toml:"kick_threshold"`
+	// HihatThreshold: minimum high-frequency ratio (highMid+high+veryHigh) to detect hi-hat/cymbal (default 0.20)
+	HihatThreshold float64 `toml:"hihat_threshold"`
+	// SnareBands: minimum number of significant frequency bands for broadband snare detection (default 4)
+	SnareBands int `toml:"snare_bands"`
+	// SimultaneousLow: kick low-frequency ratio for simultaneous kick+hihat detection (default 0.30)
+	SimultaneousLow float64 `toml:"simultaneous_low"`
+	// SimultaneousHigh: high-frequency ratio for simultaneous kick+hihat detection (default 0.15)
+	SimultaneousHigh float64 `toml:"simultaneous_high"`
+}
+
 // GeneralConfig holds general application settings.
 type GeneralConfig struct {
 	SongsDir string `toml:"songs_dir"`
@@ -88,6 +104,7 @@ type Config struct {
 	Keys       KeysConfig       `toml:"keys"`
 	Difficulty DifficultyConfig `toml:"difficulty"`
 	Audio      AudioConfig      `toml:"audio"`
+	Classifier ClassifierConfig `toml:"classifier"`
 	General    GeneralConfig    `toml:"general"`
 }
 
@@ -107,6 +124,13 @@ func DefaultConfig() Config {
 		},
 		Audio: AudioConfig{
 			DrumUnmuteMs: 300,
+		},
+		Classifier: ClassifierConfig{
+			KickThreshold:    0.50,
+			HihatThreshold:   0.20,
+			SnareBands:       4,
+			SimultaneousLow:  0.30,
+			SimultaneousHigh: 0.15,
 		},
 		General: GeneralConfig{
 			SongsDir: "~/Music/drum-hero",
@@ -217,10 +241,31 @@ custom_threshold_ms = 80
 # How long (ms) the drum track stays audible after a correct hit
 drum_unmute_ms = 300
 
+[classifier]
+# Thresholds for drum hit classification. Changing these clears the cached drum map.
+# Lower hihat_threshold to detect more hi-hats/cymbals; raise to detect fewer.
+# Lower kick_threshold to detect more kicks; raise to require stronger bass.
+# Lower snare_bands to be more lenient with snare; raise to require broader spectrum.
+kick_threshold = 0.50
+hihat_threshold = 0.20
+snare_bands = 4
+simultaneous_low = 0.30
+simultaneous_high = 0.15
+
 [general]
 songs_dir = "~/Music/drum-hero"
 `
 	return os.WriteFile(path, []byte(content), 0o644)
+}
+
+// Fingerprint returns a short hash of the classifier config values.
+// Used to detect when cached drum maps need re-analysis.
+func (c *ClassifierConfig) Fingerprint() string {
+	s := fmt.Sprintf("%.4f|%.4f|%d|%.4f|%.4f",
+		c.KickThreshold, c.HihatThreshold, c.SnareBands,
+		c.SimultaneousLow, c.SimultaneousHigh)
+	h := sha256.Sum256([]byte(s))
+	return fmt.Sprintf("%x", h[:8])
 }
 
 // expandHome expands ~ to the user's home directory.

@@ -366,6 +366,7 @@ func (a *App) tickCmd() tea.Cmd {
 
 func (a *App) loadSongCmd(path string) tea.Cmd {
 	pc := a.progress
+	classifierCfg := a.cfg.Classifier
 	return func() tea.Msg {
 		logger.Log("[loadSongCmd] starting: path=%s", path)
 		onProgress := func(msg string) {
@@ -380,7 +381,7 @@ func (a *App) loadSongCmd(path string) tea.Cmd {
 		}
 		logger.Log("[loadSongCmd] Separate OK: hash=%s", hash)
 
-		drumMap, err := analysis.Analyze(hash, onProgress)
+		drumMap, err := analysis.Analyze(hash, classifierCfg, onProgress)
 		if err != nil {
 			logger.Log("[loadSongCmd] Analyze failed: %v", err)
 			return songLoadedMsg{err: err}

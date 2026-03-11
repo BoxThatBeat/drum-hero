@@ -14,8 +14,8 @@ A Guitar Hero-inspired rhythm game that runs in the terminal, focused on drummin
 
 1. You provide any audio file (mp3, wav, flac, etc.)
 2. [Demucs](https://github.com/adefossez/demucs) isolates the drum track from the rest of the song
-3. Spectral analysis detects every drum hit and classifies it (kick, snare, hi-hat, toms, cymbal)
-4. Notes scroll down the screen in 8 color-coded lanes
+3. Spectral analysis detects every drum hit and classifies it (kick, snare, hi-hat, cymbal)
+4. Notes scroll down the screen in 5 color-coded lanes
 5. Hit the matching key at the right time -- the drum track only plays when you nail the timing
 6. Build streaks, rack up multiplier bonuses, and chase high scores
 
@@ -80,19 +80,18 @@ Notes fall from the top of the screen toward the hit zone at the bottom. Each la
 
 ```
  Song Name  Score: 4200  Streak: 15  4x         High: 12000
- LWT │ MDT │ HIT │ SNR │ CHH │ OHH │ KCK │ CYM
-  a  │  s  │  d  │  f  │  k  │  l  │  j  │  ;
-─────────────────────────────────────────────────
-     │     │     │     │  ▲  │     │     │
-     │     │     │     │     │     │     │
-     │  ◼  │     │  ◆  │     │     │  ●  │
-     │     │     │     │     │     │     │
-     │     │  ■  │     │  ▲  │     │     │  ★
-     │     │     │     │     │     │     │
-     │     │     │  ◆  │     │     │  ●  │
-═════════════════════════════════════════════════
-  ▬  │  ◼  │  ■  │  ◆  │  ▲  │  △  │  ●  │  ★
-═════════════════════════════════════════════════
+ CHH │ OHH │ SNR │ KCK │ CYM
+  a  │  s  │  d  │  j  │  k
+─────────────────────────────────
+     │     │     │     │
+     │     │  ◆  │  ●  │
+     │     │     │     │  ★
+  ▲  │     │     │     │
+     │     │  ◆  │  ●  │
+     │  △  │     │     │
+═════════════════════════════════
+  ▲  │  △  │  ◆  │  ●  │  ★
+═════════════════════════════════
  [ESC] Pause
 ```
 
@@ -100,18 +99,15 @@ Notes fall from the top of the screen toward the hit zone at the bottom. Each la
 
 | Key | Action |
 |-----|--------|
-| `a` | Low Tom |
-| `s` | Mid Tom |
-| `d` | Hi Tom |
-| `f` | Snare |
+| `a` | Closed Hi-Hat |
+| `s` | Open Hi-Hat |
+| `d` | Snare |
 | `j` | Kick |
-| `k` | Closed Hi-Hat |
-| `l` | Open Hi-Hat |
-| `;` | Cymbal |
+| `k` | Cymbal |
 | `Esc` | Pause / Resume |
 | `Ctrl+C` | Quit |
 
-Left hand handles toms and snare, right hand handles kick, hi-hats, and cymbal -- mirroring a real drummer's orientation.
+Left hand handles hi-hats and snare, right hand handles kick and cymbal.
 
 ### Drum Symbols
 
@@ -121,9 +117,6 @@ Left hand handles toms and snare, right hand handles kick, hi-hats, and cymbal -
 | Snare | `◆` | Yellow |
 | Closed Hi-Hat | `▲` | Cyan |
 | Open Hi-Hat | `△` | Blue |
-| Hi Tom | `■` | Green |
-| Mid Tom | `◼` | Magenta |
-| Low Tom | `▬` | White |
 | Cymbal | `★` | Bright Yellow |
 
 Colors are ANSI 0-15 so they respect your terminal theme.
@@ -153,19 +146,28 @@ Config file: `~/.config/drum-hero/config.toml`
 
 ```toml
 [keys]
+closed-hihat = "a"
+open-hihat = "s"
+snare = "d"
 kick = "j"
-snare = "f"
-closed-hihat = "k"
-open-hihat = "l"
-hi-tom = "d"
-mid-tom = "s"
-low-tom = "a"
-cymbal = ";"
+cymbal = "k"
 
 [difficulty]
 # Options: easy (+/-150ms), medium (+/-100ms), hard (+/-60ms), expert (+/-30ms), custom
 preset = "medium"
 custom_threshold_ms = 80
+
+[audio]
+# How long (ms) the drum track stays audible after a correct hit
+drum_unmute_ms = 300
+
+[classifier]
+# Thresholds for drum hit classification (see Tuning section below)
+kick_threshold = 0.50
+hihat_threshold = 0.20
+snare_bands = 4
+simultaneous_low = 0.30
+simultaneous_high = 0.15
 
 [general]
 songs_dir = "~/Music/drum-hero"
@@ -223,15 +225,33 @@ Each detected onset is classified by analyzing the frequency band energy distrib
 | Drum | Frequency Signature |
 |------|-------------------|
 | Kick | Dominant energy below 200 Hz |
-| Snare | Mid-range (200 Hz - 2 kHz) with broadband noise |
-| Closed Hi-Hat | Energy above 5 kHz, fast decay |
-| Open Hi-Hat | Energy above 5 kHz, slower decay |
-| Hi Tom | Peak around 300 - 600 Hz |
-| Mid Tom | Peak around 150 - 350 Hz |
-| Low Tom | Peak around 80 - 200 Hz |
-| Cymbal | Broad energy above 3 kHz, long sustain |
+| Snare | Broadband energy across 4+ frequency bands with mid-range body |
+| Closed Hi-Hat | Energy above 2 kHz, fast decay |
+| Open Hi-Hat | Energy above 2 kHz, slower decay |
+| Cymbal | Broad energy above 5 kHz, long sustain |
+
+When two drums are played at the same time (e.g. kick + hi-hat), the classifier detects both and produces two notes at the same timestamp, requiring both keys to be pressed.
 
 Since demucs already isolates the drums, these heuristics work well without needing a machine learning model.
+
+### Tuning the Classifier
+
+The classifier thresholds are configurable in `[classifier]` and can be adjusted per-song style. When you change any threshold, cached drum maps are automatically invalidated and re-analyzed on the next play.
+
+| Setting | Default | What it controls |
+|---------|---------|-----------------|
+| `kick_threshold` | 0.50 | Minimum low-frequency energy ratio (sub-bass + bass) to classify as kick. Lower = more kicks detected. |
+| `hihat_threshold` | 0.20 | Minimum high-frequency energy ratio (high-mid + high + very-high) to classify as hi-hat/cymbal. Lower = more hi-hats and cymbals detected. |
+| `snare_bands` | 4 | Minimum number of frequency bands (out of 7) with significant energy for broadband snare detection. The snare check runs *before* the hi-hat check, so raising this lets more hits fall through to hi-hat/cymbal. |
+| `simultaneous_low` | 0.30 | Low-frequency threshold for detecting simultaneous kick + hi-hat/cymbal hits. |
+| `simultaneous_high` | 0.15 | High-frequency threshold for detecting simultaneous kick + hi-hat/cymbal hits. |
+
+**Common adjustments:**
+
+- **Not enough hi-hats/cymbals?** Lower `hihat_threshold` (try `0.10`) and/or raise `snare_bands` to `5`.
+- **Too many false kicks?** Raise `kick_threshold` (try `0.60`).
+- **Snare eating everything?** Raise `snare_bands` to `5` or `6` to require a wider spectral spread before classifying as snare.
+- **Missing simultaneous hits?** Lower `simultaneous_high` (try `0.10`) to detect hi-hats layered with kicks more easily.
 
 ## Project Structure
 

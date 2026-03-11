@@ -20,7 +20,7 @@ func TestClassify_KickLike(t *testing.T) {
 		t.Skip("onset detection didn't find the kick - skipping classification test")
 	}
 
-	typeSets := Classify(mono, sampleRate, onsets)
+	typeSets := Classify(mono, sampleRate, onsets, config.DefaultConfig().Classifier)
 	t.Logf("Classified kick-like signal: onsets=%v, types=%v", onsets, typeSets)
 
 	// The kick-like signal should classify as kick
@@ -50,7 +50,7 @@ func TestClassify_HiHatLike(t *testing.T) {
 		t.Skip("onset detection didn't find the hi-hat - skipping classification test")
 	}
 
-	typeSets := Classify(mono, sampleRate, onsets)
+	typeSets := Classify(mono, sampleRate, onsets, config.DefaultConfig().Classifier)
 	t.Logf("Classified hi-hat-like signal: onsets=%v, types=%v", onsets, typeSets)
 
 	// Should classify as some kind of high-frequency drum
@@ -106,7 +106,7 @@ func TestClassifyFromFeatures(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := classifyFromFeatures(tt.energy, tt.env)
+			got := classifyFromFeatures(tt.energy, tt.env, config.DefaultConfig().Classifier)
 			if len(got) == 0 {
 				t.Fatal("classifyFromFeatures() returned empty slice")
 			}
