@@ -4,12 +4,15 @@ import (
 	"os"
 
 	"github.com/boxthatbeat/drum-hero/internal/config"
+	"github.com/boxthatbeat/drum-hero/internal/logger"
 	"github.com/boxthatbeat/drum-hero/internal/tui"
 
 	tea "charm.land/bubbletea/v2"
 )
 
 func main() {
+	logger.Init()
+
 	cfg, err := config.Load()
 	if err != nil {
 		panic(err)

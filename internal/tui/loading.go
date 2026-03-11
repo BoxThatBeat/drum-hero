@@ -13,6 +13,9 @@ type loadingModel struct {
 	messages []string
 	frame    int
 	done     bool
+	ready    bool // true when processing succeeded and waiting for user to press enter
+	starting bool // true after user pressed enter, waiting for audio to initialize
+	errored  bool // true when processing failed
 }
 
 func newLoadingModel() loadingModel {
@@ -29,8 +32,23 @@ func (m *loadingModel) setDone() {
 	m.done = true
 }
 
-func (m *loadingModel) isDone() bool {
-	return m.done
+func (m *loadingModel) setReady() {
+	m.done = true
+	m.ready = true
+}
+
+func (m *loadingModel) setErrored() {
+	m.done = true
+	m.errored = true
+}
+
+func (m *loadingModel) isReady() bool {
+	return m.ready && !m.starting
+}
+
+func (m *loadingModel) setStarting() {
+	m.starting = true
+	m.ready = false
 }
 
 func (m *loadingModel) tick() {
@@ -49,8 +67,10 @@ func (m *loadingModel) view(width, height int) string {
 		spinIdx := (m.frame / 3) % len(spinnerFrames)
 		spinner := loadingStyle.Render(spinnerFrames[spinIdx])
 		b.WriteString(fmt.Sprintf("  %s Loading...\n\n", spinner))
-	} else {
+	} else if m.ready {
 		b.WriteString("  Done!\n\n")
+	} else {
+		b.WriteString("  Error!\n\n")
 	}
 
 	// Messages
@@ -63,7 +83,19 @@ func (m *loadingModel) view(width, height int) string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(dimStyle.Render("  [q] Cancel"))
+	if m.starting {
+		spinIdx := (m.frame / 3) % len(spinnerFrames)
+		spinner := loadingStyle.Render(spinnerFrames[spinIdx])
+		b.WriteString(fmt.Sprintf("  %s Starting...", spinner))
+	} else if m.ready {
+		b.WriteString(menuSelectedStyle.Render("  [Enter] Play!"))
+		b.WriteString("  ")
+		b.WriteString(dimStyle.Render("[q] Back"))
+	} else if m.errored {
+		b.WriteString(dimStyle.Render("  Returning to menu..."))
+	} else {
+		b.WriteString(dimStyle.Render("  [q] Cancel"))
+	}
 
 	return lipgloss.Place(width, height, lipgloss.Left, lipgloss.Top, b.String())
 }

@@ -1,12 +1,12 @@
 package audio
 
 import (
+	"encoding/binary"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"time"
-
-	"github.com/go-audio/wav"
 )
 
 // AudioData holds decoded audio data as float64 samples normalized to [-1.0, 1.0].
@@ -48,6 +48,132 @@ func (a *AudioData) TimeAtFrame(frame int) time.Duration {
 	return time.Duration(float64(frame) / float64(a.SampleRate) * float64(time.Second))
 }
 
+// wavHeader holds parsed WAV file header info.
+type wavHeader struct {
+	channels   int
+	sampleRate int
+	bitDepth   int
+	dataOffset int64
+	dataSize   int
+}
+
+// parseWAVHeader reads a WAV file header and locates the data chunk.
+func parseWAVHeader(f *os.File) (*wavHeader, error) {
+	// Read RIFF header (12 bytes)
+	var riffID [4]byte
+	var fileSize uint32
+	var waveID [4]byte
+
+	if err := binary.Read(f, binary.LittleEndian, &riffID); err != nil {
+		return nil, fmt.Errorf("reading RIFF header: %w", err)
+	}
+	if string(riffID[:]) != "RIFF" {
+		return nil, fmt.Errorf("not a RIFF file")
+	}
+	if err := binary.Read(f, binary.LittleEndian, &fileSize); err != nil {
+		return nil, fmt.Errorf("reading file size: %w", err)
+	}
+	if err := binary.Read(f, binary.LittleEndian, &waveID); err != nil {
+		return nil, fmt.Errorf("reading WAVE ID: %w", err)
+	}
+	if string(waveID[:]) != "WAVE" {
+		return nil, fmt.Errorf("not a WAVE file")
+	}
+
+	var h wavHeader
+
+	// Scan chunks to find "fmt " and "data"
+	foundFmt := false
+	for {
+		var chunkID [4]byte
+		var chunkSize uint32
+
+		if err := binary.Read(f, binary.LittleEndian, &chunkID); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, fmt.Errorf("reading chunk header: %w", err)
+		}
+		if err := binary.Read(f, binary.LittleEndian, &chunkSize); err != nil {
+			return nil, fmt.Errorf("reading chunk size: %w", err)
+		}
+
+		id := string(chunkID[:])
+
+		switch id {
+		case "fmt ":
+			var audioFormat uint16
+			var numChannels uint16
+			var sampleRate uint32
+			var byteRate uint32
+			var blockAlign uint16
+			var bitsPerSample uint16
+
+			if err := binary.Read(f, binary.LittleEndian, &audioFormat); err != nil {
+				return nil, fmt.Errorf("reading fmt chunk: %w", err)
+			}
+			if err := binary.Read(f, binary.LittleEndian, &numChannels); err != nil {
+				return nil, fmt.Errorf("reading fmt chunk: %w", err)
+			}
+			if err := binary.Read(f, binary.LittleEndian, &sampleRate); err != nil {
+				return nil, fmt.Errorf("reading fmt chunk: %w", err)
+			}
+			if err := binary.Read(f, binary.LittleEndian, &byteRate); err != nil {
+				return nil, fmt.Errorf("reading fmt chunk: %w", err)
+			}
+			_ = byteRate
+			if err := binary.Read(f, binary.LittleEndian, &blockAlign); err != nil {
+				return nil, fmt.Errorf("reading fmt chunk: %w", err)
+			}
+			_ = blockAlign
+			if err := binary.Read(f, binary.LittleEndian, &bitsPerSample); err != nil {
+				return nil, fmt.Errorf("reading fmt chunk: %w", err)
+			}
+
+			if audioFormat != 1 {
+				return nil, fmt.Errorf("unsupported audio format %d (only PCM/1 supported)", audioFormat)
+			}
+
+			h.channels = int(numChannels)
+			h.sampleRate = int(sampleRate)
+			h.bitDepth = int(bitsPerSample)
+			foundFmt = true
+
+			// Skip any extra fmt bytes
+			extra := int64(chunkSize) - 16
+			if extra > 0 {
+				if _, err := f.Seek(extra, io.SeekCurrent); err != nil {
+					return nil, err
+				}
+			}
+
+		case "data":
+			if !foundFmt {
+				return nil, fmt.Errorf("data chunk before fmt chunk")
+			}
+			offset, err := f.Seek(0, io.SeekCurrent)
+			if err != nil {
+				return nil, err
+			}
+			h.dataOffset = offset
+			h.dataSize = int(chunkSize)
+			return &h, nil
+
+		default:
+			// Skip unknown chunk (pad to even boundary)
+			skip := int64(chunkSize)
+			if skip%2 != 0 {
+				skip++
+			}
+			if _, err := f.Seek(skip, io.SeekCurrent); err != nil {
+				return nil, fmt.Errorf("skipping chunk %q: %w", id, err)
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("no data chunk found")
+}
+
 // DecodeWAV decodes a WAV file into AudioData with float64 samples.
 func DecodeWAV(path string) (*AudioData, error) {
 	f, err := os.Open(path)
@@ -56,23 +182,23 @@ func DecodeWAV(path string) (*AudioData, error) {
 	}
 	defer f.Close()
 
-	dec := wav.NewDecoder(f)
-	if !dec.IsValidFile() {
-		return nil, fmt.Errorf("invalid wav file: %s", path)
-	}
-
-	buf, err := dec.FullPCMBuffer()
+	h, err := parseWAVHeader(f)
 	if err != nil {
-		return nil, fmt.Errorf("decoding wav: %w", err)
+		return nil, fmt.Errorf("parsing wav header in %s: %w", path, err)
 	}
 
-	channels := int(dec.NumChans)
-	sampleRate := int(dec.SampleRate)
-	bitDepth := int(dec.BitDepth)
+	bytesPerSample := h.bitDepth / 8
+	numSamples := h.dataSize / bytesPerSample
 
-	// Determine the max value for normalization based on bit depth
+	// Read raw data
+	rawData := make([]byte, h.dataSize)
+	if _, err := io.ReadFull(f, rawData); err != nil {
+		return nil, fmt.Errorf("reading wav data: %w", err)
+	}
+
+	// Determine the max value for normalization
 	var maxVal float64
-	switch bitDepth {
+	switch h.bitDepth {
 	case 8:
 		maxVal = math.MaxInt8
 	case 16:
@@ -85,30 +211,48 @@ func DecodeWAV(path string) (*AudioData, error) {
 		maxVal = math.MaxInt16
 	}
 
-	// Convert int samples to float64 normalized to [-1.0, 1.0]
-	samples := make([]float64, len(buf.Data))
-	for i, s := range buf.Data {
-		samples[i] = float64(s) / maxVal
+	// Convert to float64
+	samples := make([]float64, numSamples)
+	switch h.bitDepth {
+	case 16:
+		for i := 0; i < numSamples; i++ {
+			samples[i] = float64(int16(binary.LittleEndian.Uint16(rawData[i*2:]))) / maxVal
+		}
+	case 24:
+		for i := 0; i < numSamples; i++ {
+			off := i * 3
+			val := int32(rawData[off]) | int32(rawData[off+1])<<8 | int32(rawData[off+2])<<16
+			if val >= 1<<23 {
+				val -= 1 << 24 // sign extend
+			}
+			samples[i] = float64(val) / maxVal
+		}
+	case 32:
+		for i := 0; i < numSamples; i++ {
+			samples[i] = float64(int32(binary.LittleEndian.Uint32(rawData[i*4:]))) / maxVal
+		}
+	default:
+		return nil, fmt.Errorf("unsupported bit depth: %d", h.bitDepth)
 	}
 
 	// Create mono mixdown
-	numFrames := len(samples) / channels
+	numFrames := numSamples / h.channels
 	mono := make([]float64, numFrames)
 	for i := 0; i < numFrames; i++ {
 		var sum float64
-		for ch := 0; ch < channels; ch++ {
-			sum += samples[i*channels+ch]
+		for ch := 0; ch < h.channels; ch++ {
+			sum += samples[i*h.channels+ch]
 		}
-		mono[i] = sum / float64(channels)
+		mono[i] = sum / float64(h.channels)
 	}
 
-	duration := time.Duration(float64(numFrames) / float64(sampleRate) * float64(time.Second))
+	duration := time.Duration(float64(numFrames) / float64(h.sampleRate) * float64(time.Second))
 
 	return &AudioData{
 		Samples:    samples,
 		Mono:       mono,
-		SampleRate: sampleRate,
-		Channels:   channels,
+		SampleRate: h.sampleRate,
+		Channels:   h.channels,
 		Duration:   duration,
 	}, nil
 }
@@ -122,40 +266,43 @@ func LoadRawSamples(path string) ([]int16, int, int, error) {
 	}
 	defer f.Close()
 
-	dec := wav.NewDecoder(f)
-	if !dec.IsValidFile() {
-		return nil, 0, 0, fmt.Errorf("invalid wav file: %s", path)
-	}
-
-	buf, err := dec.FullPCMBuffer()
+	h, err := parseWAVHeader(f)
 	if err != nil {
-		return nil, 0, 0, fmt.Errorf("decoding wav: %w", err)
+		return nil, 0, 0, fmt.Errorf("parsing wav header in %s: %w", path, err)
 	}
 
-	channels := int(dec.NumChans)
-	sampleRate := int(dec.SampleRate)
-	bitDepth := int(dec.BitDepth)
+	bytesPerSample := h.bitDepth / 8
+	numSamples := h.dataSize / bytesPerSample
 
-	// Convert to int16 for playback
-	samples := make([]int16, len(buf.Data))
-	switch bitDepth {
+	// Read raw data
+	rawData := make([]byte, h.dataSize)
+	if _, err := io.ReadFull(f, rawData); err != nil {
+		return nil, 0, 0, fmt.Errorf("reading wav data: %w", err)
+	}
+
+	// Convert to int16
+	samples := make([]int16, numSamples)
+	switch h.bitDepth {
 	case 16:
-		for i, s := range buf.Data {
-			samples[i] = int16(s)
+		for i := 0; i < numSamples; i++ {
+			samples[i] = int16(binary.LittleEndian.Uint16(rawData[i*2:]))
 		}
 	case 24:
-		for i, s := range buf.Data {
-			samples[i] = int16(s >> 8) // Truncate to 16-bit
+		for i := 0; i < numSamples; i++ {
+			off := i * 3
+			val := int32(rawData[off]) | int32(rawData[off+1])<<8 | int32(rawData[off+2])<<16
+			if val >= 1<<23 {
+				val -= 1 << 24
+			}
+			samples[i] = int16(val >> 8)
 		}
 	case 32:
-		for i, s := range buf.Data {
-			samples[i] = int16(s >> 16) // Truncate to 16-bit
+		for i := 0; i < numSamples; i++ {
+			samples[i] = int16(int32(binary.LittleEndian.Uint32(rawData[i*4:])) >> 16)
 		}
 	default:
-		for i, s := range buf.Data {
-			samples[i] = int16(s)
-		}
+		return nil, 0, 0, fmt.Errorf("unsupported bit depth: %d", h.bitDepth)
 	}
 
-	return samples, channels, sampleRate, nil
+	return samples, h.channels, h.sampleRate, nil
 }

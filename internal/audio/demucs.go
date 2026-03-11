@@ -21,13 +21,38 @@ const (
 // ProgressFunc is called with progress messages during separation.
 type ProgressFunc func(msg string)
 
-// CheckDemucs verifies that demucs is installed and accessible on PATH.
-func CheckDemucs() error {
-	_, err := exec.LookPath(demucsBin)
-	if err != nil {
-		return fmt.Errorf("demucs not found on PATH: install with 'pip install demucs'")
+// findDemucs locates the demucs binary by checking:
+// 1. PATH (standard lookup)
+// 2. A venv/bin directory next to the running executable
+func findDemucs() (string, error) {
+	// Check PATH first
+	if path, err := exec.LookPath(demucsBin); err == nil {
+		return path, nil
 	}
-	return nil
+
+	// Check for a venv next to the executable
+	if exe, err := os.Executable(); err == nil {
+		venvPath := filepath.Join(filepath.Dir(exe), "venv", "bin", demucsBin)
+		if _, err := os.Stat(venvPath); err == nil {
+			return venvPath, nil
+		}
+	}
+
+	// Check for a venv in the current working directory
+	if wd, err := os.Getwd(); err == nil {
+		venvPath := filepath.Join(wd, "venv", "bin", demucsBin)
+		if _, err := os.Stat(venvPath); err == nil {
+			return venvPath, nil
+		}
+	}
+
+	return "", fmt.Errorf("demucs not found on PATH or in ./venv: install with 'pip install demucs'")
+}
+
+// CheckDemucs verifies that demucs is installed and accessible.
+func CheckDemucs() error {
+	_, err := findDemucs()
+	return err
 }
 
 // Separate runs demucs to separate a song into drums and no_drums tracks.
@@ -63,7 +88,8 @@ func Separate(audioPath string, onProgress ProgressFunc) (hash string, err error
 	}
 
 	// Check demucs is available
-	if err := CheckDemucs(); err != nil {
+	demucsPath, err := findDemucs()
+	if err != nil {
 		return "", err
 	}
 
@@ -77,7 +103,7 @@ func Separate(audioPath string, onProgress ProgressFunc) (hash string, err error
 	// Run demucs
 	onProgress(fmt.Sprintf("Separating with %s model (this may take a while)...", demucsModel))
 
-	cmd := exec.Command(demucsBin,
+	cmd := exec.Command(demucsPath,
 		"-n", demucsModel,
 		"--two-stems=drums",
 		"-o", tmpDir,

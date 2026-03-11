@@ -48,13 +48,13 @@ sudo pacman -S alsa-lib
 ```bash
 git clone https://github.com/boxthatbeat/drum-hero.git
 cd drum-hero
-go build -o drum-hero ./cmd/drum-hero/
+go build -o drum-hero .
 ```
 
 Or install directly:
 
 ```bash
-go install github.com/boxthatbeat/drum-hero/cmd/drum-hero@latest
+go install github.com/boxthatbeat/drum-hero@latest
 ```
 
 ## Usage
@@ -236,7 +236,7 @@ Since demucs already isolates the drums, these heuristics work well without need
 ## Project Structure
 
 ```
-cmd/drum-hero/main.go           Entry point, CLI
+main.go                         Entry point, CLI
 internal/
   config/config.go               XDG config, key mappings, difficulty
   cache/cache.go                 SHA256 hashing, cache management
