@@ -19,21 +19,55 @@ const noteWindowBehindMs = 500.0
 // laneSep is the separator character between lanes.
 const laneSep = "│"
 
+// noteHalf represents which half of a cell a note occupies.
+type noteHalf int
+
+const (
+	noteNone  noteHalf = iota
+	noteUpper          // ▀ (upper half-block)
+	noteLower          // ▄ (lower half-block)
+	noteFull           // █ (full block — two notes in same cell)
+)
+
+// Pre-cached styles to avoid per-frame allocation.
+type cachedStyles struct {
+	laneCell    lipgloss.Style            // empty cell with Width+Align
+	sepRendered string                    // pre-rendered separator
+	drumActive  map[config.DrumType]lipgloss.Style // bold colored per drum
+}
+
 type playModel struct {
 	cfg      *config.Config
 	engine   *game.Engine
 	player   *audio.Player
 	songName string
 	lanes    []config.DrumType
+	styles   cachedStyles
 }
 
 func newPlayModel(cfg *config.Config, engine *game.Engine, player *audio.Player, songName string) playModel {
+	lanes := config.AllDrumTypes()
+
+	// Pre-cache styles
+	cs := cachedStyles{
+		laneCell: lipgloss.NewStyle().
+			Width(laneWidth).
+			Align(lipgloss.Center),
+		sepRendered: dimStyle.Render(laneSep),
+		drumActive:  make(map[config.DrumType]lipgloss.Style, len(lanes)),
+	}
+	for _, dt := range lanes {
+		vis := DrumVisuals[dt]
+		cs.drumActive[dt] = lipgloss.NewStyle().Foreground(vis.Color).Bold(true)
+	}
+
 	return playModel{
 		cfg:      cfg,
 		engine:   engine,
 		player:   player,
 		songName: songName,
-		lanes:    config.AllDrumTypes(),
+		lanes:    lanes,
+		styles:   cs,
 	}
 }
 
@@ -53,6 +87,7 @@ func (m *playModel) renderGame(width, height, highScore int, paused bool) string
 	s := m.engine.Score()
 
 	var b strings.Builder
+	b.Grow(width * height) // rough pre-alloc
 
 	// === HUD (top bar) ===
 	hud := m.renderHUD(s, highScore, width)
@@ -140,8 +175,6 @@ func (m *playModel) renderLaneHeaders() string {
 	var keys []string
 	drumToKey := m.cfg.DrumToKey()
 
-	sepStyle := dimStyle
-
 	for i, dt := range m.lanes {
 		vis := DrumVisuals[dt]
 		style := lipgloss.NewStyle().
@@ -156,8 +189,8 @@ func (m *playModel) renderLaneHeaders() string {
 			Align(lipgloss.Center)
 
 		if i > 0 {
-			headers = append(headers, sepStyle.Render(laneSep))
-			keys = append(keys, sepStyle.Render(laneSep))
+			headers = append(headers, m.styles.sepRendered)
+			keys = append(keys, m.styles.sepRendered)
 		}
 
 		headers = append(headers, style.Render(vis.Short))
@@ -176,6 +209,14 @@ func (m *playModel) renderSeparator(char string) string {
 	return strings.Repeat(char, totalWidth)
 }
 
+// noteSlot represents what's in one half-row slot of the grid.
+type noteSlot struct {
+	drumType config.DrumType
+	consumed bool
+	missed   bool
+	present  bool
+}
+
 func (m *playModel) renderHighway(height int) string {
 	if m.engine == nil || m.player == nil {
 		return strings.Repeat("\n", height)
@@ -185,61 +226,76 @@ func (m *playModel) renderHighway(height int) string {
 	visible := m.engine.VisibleNotes(currentMs, noteWindowAheadMs, noteWindowBehindMs)
 
 	numLanes := len(m.lanes)
-	sepStyle := dimStyle
 
-	// Build the grid: rows x lanes
-	grid := make([][]string, height)
-	for row := 0; row < height; row++ {
-		grid[row] = make([]string, numLanes)
-		for col := 0; col < numLanes; col++ {
-			grid[row][col] = " "
-		}
+	// Double vertical resolution: each terminal row has an upper and lower slot.
+	// Total slots = height * 2.
+	totalSlots := height * 2
+
+	// Build the grid at double resolution: slots x lanes
+	grid := make([][]noteSlot, totalSlots)
+	for s := 0; s < totalSlots; s++ {
+		grid[s] = make([]noteSlot, numLanes)
 	}
 
-	// Map each visible note to a row
+	// Map each visible note to a slot
 	for _, note := range visible {
 		timeDiff := note.Hit.TimeMs - currentMs
-		// Normalize: 0 = hit zone (bottom), 1 = top of screen
 		normalized := timeDiff / noteWindowAheadMs
 		if normalized < 0 || normalized > 1 {
 			continue
 		}
 
-		// Row 0 = top (future), row height-1 = bottom (hit zone)
-		row := int((1.0 - normalized) * float64(height-1))
-		if row < 0 || row >= height {
+		// Slot 0 = top (future), slot totalSlots-1 = bottom (hit zone)
+		slot := int((1.0 - normalized) * float64(totalSlots-1))
+		if slot < 0 || slot >= totalSlots {
 			continue
 		}
 
 		// Find the lane for this note
 		for col, dt := range m.lanes {
 			if note.Hit.Type == dt {
-				vis := DrumVisuals[dt]
-				if note.Consumed {
-					grid[row][col] = dimStyle.Render(vis.Symbol)
-				} else if note.Missed {
-					grid[row][col] = hitWrongStyle.Render(vis.Symbol)
-				} else {
-					style := lipgloss.NewStyle().Foreground(vis.Color).Bold(true)
-					grid[row][col] = style.Render(vis.Symbol)
+				grid[slot][col] = noteSlot{
+					drumType: dt,
+					consumed: note.Consumed,
+					missed:   note.Missed,
+					present:  true,
 				}
 				break
 			}
 		}
 	}
 
-	// Render the grid with lane separators
+	// Render the grid: combine pairs of slots into single rows using half-blocks
 	var b strings.Builder
+	b.Grow(height * (numLanes*(laneWidth+4) + 1))
+
 	for row := 0; row < height; row++ {
+		upperIdx := row * 2
+		lowerIdx := row*2 + 1
+
 		for col := 0; col < numLanes; col++ {
 			if col > 0 {
-				b.WriteString(sepStyle.Render(laneSep))
+				b.WriteString(m.styles.sepRendered)
 			}
-			cell := lipgloss.NewStyle().
-				Width(laneWidth).
-				Align(lipgloss.Center).
-				Render(grid[row][col])
-			b.WriteString(cell)
+
+			upper := grid[upperIdx][col]
+			lower := grid[lowerIdx][col]
+
+			var cellContent string
+
+			switch {
+			case upper.present && lower.present:
+				// Both halves have notes — render full block with upper note's color
+				cellContent = m.renderNoteChar("█", upper)
+			case upper.present:
+				cellContent = m.renderNoteChar("▀", upper)
+			case lower.present:
+				cellContent = m.renderNoteChar("▄", lower)
+			default:
+				cellContent = " "
+			}
+
+			b.WriteString(m.styles.laneCell.Render(cellContent))
 		}
 		b.WriteString("\n")
 	}
@@ -247,9 +303,22 @@ func (m *playModel) renderHighway(height int) string {
 	return b.String()
 }
 
+// renderNoteChar renders a half-block character with the appropriate style for a note.
+func (m *playModel) renderNoteChar(char string, slot noteSlot) string {
+	if slot.consumed {
+		return dimStyle.Render(char)
+	}
+	if slot.missed {
+		return hitWrongStyle.Render(char)
+	}
+	if style, ok := m.styles.drumActive[slot.drumType]; ok {
+		return style.Render(char)
+	}
+	return char
+}
+
 func (m *playModel) renderHitZone() string {
 	hitResult, hitLane, hitFeedback := m.engine.LastHitFeedback()
-	sepStyle := dimStyle
 
 	// Top separator (hit zone boundary)
 	topSep := m.renderSeparator("═")
@@ -261,9 +330,7 @@ func (m *playModel) renderHitZone() string {
 		vis := DrumVisuals[dt]
 		indicator := vis.Symbol
 
-		style := lipgloss.NewStyle().
-			Width(laneWidth).
-			Align(lipgloss.Center)
+		style := m.styles.laneCell
 
 		if hitFeedback > 0 && hitLane == dt {
 			if hitResult == game.HitCorrect {
@@ -278,7 +345,7 @@ func (m *playModel) renderHitZone() string {
 		}
 
 		if i > 0 {
-			hitParts = append(hitParts, sepStyle.Render(laneSep))
+			hitParts = append(hitParts, m.styles.sepRendered)
 		}
 		hitParts = append(hitParts, style.Render(indicator))
 	}
