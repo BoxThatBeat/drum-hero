@@ -142,8 +142,10 @@ func (e *Engine) KeyPress(key string) (HitResult, config.DrumType) {
 		e.notes[bestIdx].Result = HitCorrect
 		e.score.Hit()
 
-		// Unmute drums around this hit
-		e.player.UnmuteDrums(e.notes[bestIdx].Hit.TimeMs, 50, 150)
+		// Unmute drums around this hit — window duration is configurable
+		// so the drum sound rings out naturally without affecting hit scoring.
+		unmuteMs := float64(e.cfg.Audio.DrumUnmuteMs)
+		e.player.UnmuteDrums(e.notes[bestIdx].Hit.TimeMs, 50, unmuteMs)
 
 		e.mu.Lock()
 		e.lastHitResult = HitCorrect

@@ -79,6 +79,11 @@ type DifficultyConfig struct {
 	CustomThresholdMs int        `toml:"custom_threshold_ms"`
 }
 
+// AudioConfig holds audio playback settings.
+type AudioConfig struct {
+	DrumUnmuteMs int `toml:"drum_unmute_ms"`
+}
+
 // GeneralConfig holds general application settings.
 type GeneralConfig struct {
 	SongsDir string `toml:"songs_dir"`
@@ -88,6 +93,7 @@ type GeneralConfig struct {
 type Config struct {
 	Keys       KeysConfig       `toml:"keys"`
 	Difficulty DifficultyConfig `toml:"difficulty"`
+	Audio      AudioConfig      `toml:"audio"`
 	General    GeneralConfig    `toml:"general"`
 }
 
@@ -107,6 +113,9 @@ func DefaultConfig() Config {
 		Difficulty: DifficultyConfig{
 			Preset:            Medium,
 			CustomThresholdMs: 80,
+		},
+		Audio: AudioConfig{
+			DrumUnmuteMs: 300,
 		},
 		General: GeneralConfig{
 			SongsDir: "~/Music/drum-hero",
@@ -221,6 +230,10 @@ cymbal = ";"
 # Options: easy (+/-150ms), medium (+/-100ms), hard (+/-60ms), expert (+/-30ms), custom
 preset = "medium"
 custom_threshold_ms = 80
+
+[audio]
+# How long (ms) the drum track stays audible after a correct hit
+drum_unmute_ms = 300
 
 [general]
 songs_dir = "~/Music/drum-hero"
