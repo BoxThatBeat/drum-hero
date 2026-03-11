@@ -23,9 +23,10 @@ const (
 	Cymbal   DrumType = "cymbal"
 )
 
-// AllDrumTypes returns all drum types in lane display order (left to right).
+// AllDrumTypes returns all drum types in lane display order (left to right),
+// matching the default key layout on a QWERTY keyboard: a s d f j k l ;
 func AllDrumTypes() []DrumType {
-	return []DrumType{LowTom, MidTom, HiTom, Snare, ClosedHH, OpenHH, Kick, Cymbal}
+	return []DrumType{LowTom, MidTom, HiTom, Snare, Kick, ClosedHH, OpenHH, Cymbal}
 }
 
 // Difficulty represents a named difficulty preset.

@@ -197,7 +197,7 @@ func (a *App) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		switch msg.String() {
-		case "q", "escape":
+		case "q", "esc":
 			a.cleanup()
 			return a, tea.Quit
 		case "enter":
@@ -231,7 +231,7 @@ func (a *App) updateLoading(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		key := msg.String()
 		logger.Log("[Loading] key=%q ready=%v", key, a.loading.isReady())
-		if key == "q" || key == "escape" {
+		if key == "q" || key == "esc" {
 			logger.Log("[Loading] user cancelled, returning to menu")
 			a.state = game.StateMenu
 			return a, nil
@@ -295,7 +295,7 @@ func (a *App) updatePlaying(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		key := msg.String()
-		if key == "escape" {
+		if key == "esc" {
 			if a.player != nil {
 				a.player.Pause()
 			}
@@ -325,7 +325,7 @@ func (a *App) updatePaused(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		switch msg.String() {
-		case "escape", "space":
+		case "esc", "space":
 			if a.player != nil {
 				a.player.Resume()
 			}
@@ -346,7 +346,7 @@ func (a *App) updateResults(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		switch msg.String() {
-		case "enter", "space", "q", "escape":
+		case "enter", "space", "q", "esc":
 			a.state = game.StateMenu
 			return a, nil
 		}
