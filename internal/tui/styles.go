@@ -40,9 +40,6 @@ var DrumVisuals = map[config.DrumType]DrumVisual{
 	config.Snare:    {Symbol: "◆", Color: colorYellow, Label: "SNARE", Short: "SNR"},
 	config.ClosedHH: {Symbol: "▲", Color: colorCyan, Label: "C-HH", Short: "CHH"},
 	config.OpenHH:   {Symbol: "△", Color: colorBlue, Label: "O-HH", Short: "OHH"},
-	config.HiTom:    {Symbol: "■", Color: colorGreen, Label: "HI-TOM", Short: "HIT"},
-	config.MidTom:   {Symbol: "◼", Color: colorMagenta, Label: "MID-TOM", Short: "MDT"},
-	config.LowTom:   {Symbol: "▬", Color: colorWhite, Label: "LOW-TOM", Short: "LWT"},
 	config.Cymbal:   {Symbol: "★", Color: colorBrightYellow, Label: "CYMBAL", Short: "CYM"},
 }
 

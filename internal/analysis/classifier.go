@@ -158,6 +158,7 @@ func computeEnvelope(mono []float64, onset, sampleRate int) EnvelopeFeatures {
 
 // classifyFromFeatures classifies a drum hit based on spectral band energies and envelope.
 // Returns one or more drum types for simultaneous hits (e.g. kick + hi-hat).
+// Only classifies into 5 types: Kick, Snare, ClosedHH, OpenHH, Cymbal.
 func classifyFromFeatures(energy BandEnergy, env EnvelopeFeatures) []config.DrumType {
 	if energy.Total == 0 {
 		return []config.DrumType{config.Snare} // fallback
@@ -192,57 +193,37 @@ func classifyFromFeatures(energy BandEnergy, env EnvelopeFeatures) []config.Drum
 		return []config.DrumType{config.Kick}
 	}
 	// Secondary kick detection for deeper kicks
-	if lowRatio > 0.4 && subBassRatio > 0.12 && allHighRatio < 0.15 {
+	if lowRatio > 0.4 && subBassRatio > 0.12 && allHighRatio < 0.1 {
 		return []config.DrumType{config.Kick}
 	}
 
-	// 2. Hi-hat / Cymbal: dominant high frequency energy (lowered threshold)
-	if allHighRatio > 0.25 {
+	// 2. Snare: broadband energy spread (energy across many bands).
+	// Snare wires produce noise across the full spectrum. A snare has significant
+	// energy in low-mid (body) AND mid/high-mid (wire buzz), unlike hi-hats which
+	// are concentrated in high frequencies only.
+	// Check snare BEFORE hi-hat because snares have high-frequency content too.
+	significantBands := countSignificantBands(energy)
+	hasMidBody := lowMidRatio > 0.05 || midRatio > 0.1
+
+	if significantBands >= 4 && hasMidBody {
+		return []config.DrumType{config.Snare}
+	}
+
+	// 3. Hi-hat / Cymbal: high frequency content, concentrated in upper bands
+	if allHighRatio > 0.2 {
 		return []config.DrumType{classifyHighFreq(energy, env)}
 	}
 
-	// 3. Snare: broadband spectrum with mid-range content
-	// Snare wires create noise across mid and high-mid bands, distinguishing
-	// snare from toms which have concentrated low-mid energy.
-	//
-	// Key insight: snares have significant energy above 2kHz (highMid+high),
-	// while toms do not. Even a small amount of high-frequency content
-	// alongside low-mid body resonance indicates snare.
-	hasSnareNoise := highMidRatio > 0.05 || highRatio > 0.05
-	hasSnareBody := lowMidRatio > 0.08 || midRatio > 0.1
-
-	if hasSnareNoise && hasSnareBody {
+	// 4. Snare fallback: anything with mid-range content
+	if lowMidRatio > 0.05 || midRatio > 0.05 || highMidRatio > 0.03 {
 		return []config.DrumType{config.Snare}
-	}
-
-	// Snare with strong mid-range
-	if midRatio+highMidRatio > 0.2 && lowMidRatio > 0.08 {
-		return []config.DrumType{config.Snare}
-	}
-
-	// Broadband energy spread = snare (energy in 4+ bands)
-	significantBands := countSignificantBands(energy)
-	if significantBands >= 4 && midRatio > 0.08 {
-		return []config.DrumType{config.Snare}
-	}
-
-	// 4. Toms: low-mid dominant with NO significant high-frequency content
-	if lowMidRatio > 0.2 {
-		// Only classify as tom if there's truly no high-frequency content
-		if bassRatio > lowMidRatio*1.3 {
-			return []config.DrumType{config.LowTom}
-		}
-		if lowMidRatio > midRatio*1.5 {
-			return []config.DrumType{config.MidTom}
-		}
-		return []config.DrumType{config.HiTom}
 	}
 
 	// 5. Fallbacks
-	if lowRatio > 0.35 {
+	if lowRatio > 0.3 {
 		return []config.DrumType{config.Kick}
 	}
-	if highRatio > 0.15 {
+	if highRatio > 0.1 {
 		return []config.DrumType{config.ClosedHH}
 	}
 
@@ -253,20 +234,20 @@ func classifyFromFeatures(energy BandEnergy, env EnvelopeFeatures) []config.Drum
 // based on the high-frequency energy distribution and envelope.
 func classifyHighFreq(energy BandEnergy, env EnvelopeFeatures) config.DrumType {
 	// Fast decay = closed hi-hat (short, tight sound)
-	if env.DecayRate > 3.0 {
+	if env.DecayRate > 2.5 {
 		return config.ClosedHH
 	}
 
-	// More very-high shimmer = cymbal
-	if energy.VeryHigh > energy.High {
+	// More very-high shimmer = cymbal (sustained, bright)
+	if energy.VeryHigh > energy.High*0.8 {
 		if env.DecayRate < 1.5 {
 			return config.Cymbal
 		}
 		return config.OpenHH
 	}
 
-	// Moderate decay = open hi-hat
-	if env.DecayRate < 2.0 {
+	// Slow decay = open hi-hat (ringing)
+	if env.DecayRate < 1.8 {
 		return config.OpenHH
 	}
 

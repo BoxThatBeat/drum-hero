@@ -17,16 +17,13 @@ const (
 	Snare    DrumType = "snare"
 	ClosedHH DrumType = "closed-hihat"
 	OpenHH   DrumType = "open-hihat"
-	HiTom    DrumType = "hi-tom"
-	MidTom   DrumType = "mid-tom"
-	LowTom   DrumType = "low-tom"
 	Cymbal   DrumType = "cymbal"
 )
 
 // AllDrumTypes returns all drum types in lane display order (left to right),
-// matching the default key layout on a QWERTY keyboard: a s d f j k l ;
+// matching the default key layout on a QWERTY keyboard: a s d j k
 func AllDrumTypes() []DrumType {
-	return []DrumType{LowTom, MidTom, HiTom, Snare, Kick, ClosedHH, OpenHH, Cymbal}
+	return []DrumType{ClosedHH, OpenHH, Snare, Kick, Cymbal}
 }
 
 // Difficulty represents a named difficulty preset.
@@ -67,9 +64,6 @@ type KeysConfig struct {
 	Snare    string `toml:"snare"`
 	ClosedHH string `toml:"closed-hihat"`
 	OpenHH   string `toml:"open-hihat"`
-	HiTom    string `toml:"hi-tom"`
-	MidTom   string `toml:"mid-tom"`
-	LowTom   string `toml:"low-tom"`
 	Cymbal   string `toml:"cymbal"`
 }
 
@@ -101,14 +95,11 @@ type Config struct {
 func DefaultConfig() Config {
 	return Config{
 		Keys: KeysConfig{
+			ClosedHH: "a",
+			OpenHH:   "s",
+			Snare:    "d",
 			Kick:     "j",
-			Snare:    "f",
-			ClosedHH: "k",
-			OpenHH:   "l",
-			HiTom:    "d",
-			MidTom:   "s",
-			LowTom:   "a",
-			Cymbal:   ";",
+			Cymbal:   "k",
 		},
 		Difficulty: DifficultyConfig{
 			Preset:            Medium,
@@ -130,9 +121,6 @@ func (c *Config) KeyToDrum() map[string]DrumType {
 		c.Keys.Snare:    Snare,
 		c.Keys.ClosedHH: ClosedHH,
 		c.Keys.OpenHH:   OpenHH,
-		c.Keys.HiTom:    HiTom,
-		c.Keys.MidTom:   MidTom,
-		c.Keys.LowTom:   LowTom,
 		c.Keys.Cymbal:   Cymbal,
 	}
 }
@@ -144,9 +132,6 @@ func (c *Config) DrumToKey() map[DrumType]string {
 		Snare:    c.Keys.Snare,
 		ClosedHH: c.Keys.ClosedHH,
 		OpenHH:   c.Keys.OpenHH,
-		HiTom:    c.Keys.HiTom,
-		MidTom:   c.Keys.MidTom,
-		LowTom:   c.Keys.LowTom,
 		Cymbal:   c.Keys.Cymbal,
 	}
 }
@@ -217,14 +202,11 @@ func writeDefault(path string, cfg Config) error {
 	content := `# Drum Hero Configuration
 
 [keys]
+closed-hihat = "a"
+open-hihat = "s"
+snare = "d"
 kick = "j"
-snare = "f"
-closed-hihat = "k"
-open-hihat = "l"
-hi-tom = "d"
-mid-tom = "s"
-low-tom = "a"
-cymbal = ";"
+cymbal = "k"
 
 [difficulty]
 # Options: easy (+/-150ms), medium (+/-100ms), hard (+/-60ms), expert (+/-30ms), custom

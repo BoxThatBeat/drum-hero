@@ -12,8 +12,8 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Keys.Kick != "j" {
 		t.Errorf("expected kick=j, got %s", cfg.Keys.Kick)
 	}
-	if cfg.Keys.Snare != "f" {
-		t.Errorf("expected snare=f, got %s", cfg.Keys.Snare)
+	if cfg.Keys.Snare != "d" {
+		t.Errorf("expected snare=d, got %s", cfg.Keys.Snare)
 	}
 	if cfg.Difficulty.Preset != Medium {
 		t.Errorf("expected medium difficulty, got %s", cfg.Difficulty.Preset)
@@ -27,11 +27,11 @@ func TestKeyToDrum(t *testing.T) {
 	if m["j"] != Kick {
 		t.Errorf("expected j->kick, got %s", m["j"])
 	}
-	if m["f"] != Snare {
-		t.Errorf("expected f->snare, got %s", m["f"])
+	if m["d"] != Snare {
+		t.Errorf("expected d->snare, got %s", m["d"])
 	}
-	if m[";"] != Cymbal {
-		t.Errorf("expected ;->cymbal, got %s", m[";"])
+	if m["k"] != Cymbal {
+		t.Errorf("expected k->cymbal, got %s", m["k"])
 	}
 }
 
@@ -105,9 +105,6 @@ kick = "space"
 snare = "x"
 closed-hihat = "z"
 open-hihat = "c"
-hi-tom = "v"
-mid-tom = "b"
-low-tom = "n"
 cymbal = "m"
 
 [difficulty]
@@ -140,8 +137,8 @@ songs_dir = "/tmp/songs"
 
 func TestAllDrumTypes(t *testing.T) {
 	types := AllDrumTypes()
-	if len(types) != 8 {
-		t.Errorf("expected 8 drum types, got %d", len(types))
+	if len(types) != 5 {
+		t.Errorf("expected 5 drum types, got %d", len(types))
 	}
 }
 

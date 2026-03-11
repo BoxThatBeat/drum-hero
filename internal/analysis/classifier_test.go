@@ -20,19 +20,21 @@ func TestClassify_KickLike(t *testing.T) {
 		t.Skip("onset detection didn't find the kick - skipping classification test")
 	}
 
-	types := Classify(mono, sampleRate, onsets)
-	t.Logf("Classified kick-like signal: onsets=%v, types=%v", onsets, types)
+	typeSets := Classify(mono, sampleRate, onsets)
+	t.Logf("Classified kick-like signal: onsets=%v, types=%v", onsets, typeSets)
 
 	// The kick-like signal should classify as kick
 	foundKick := false
-	for _, typ := range types {
-		if typ == config.Kick {
-			foundKick = true
-			break
+	for _, types := range typeSets {
+		for _, typ := range types {
+			if typ == config.Kick {
+				foundKick = true
+				break
+			}
 		}
 	}
 	if !foundKick {
-		t.Logf("Warning: kick-like signal classified as %v (heuristic may need tuning)", types)
+		t.Logf("Warning: kick-like signal classified as %v (heuristic may need tuning)", typeSets)
 	}
 }
 
@@ -48,19 +50,21 @@ func TestClassify_HiHatLike(t *testing.T) {
 		t.Skip("onset detection didn't find the hi-hat - skipping classification test")
 	}
 
-	types := Classify(mono, sampleRate, onsets)
-	t.Logf("Classified hi-hat-like signal: onsets=%v, types=%v", onsets, types)
+	typeSets := Classify(mono, sampleRate, onsets)
+	t.Logf("Classified hi-hat-like signal: onsets=%v, types=%v", onsets, typeSets)
 
 	// Should classify as some kind of high-frequency drum
 	foundHigh := false
-	for _, typ := range types {
-		if typ == config.ClosedHH || typ == config.OpenHH || typ == config.Cymbal {
-			foundHigh = true
-			break
+	for _, types := range typeSets {
+		for _, typ := range types {
+			if typ == config.ClosedHH || typ == config.OpenHH || typ == config.Cymbal {
+				foundHigh = true
+				break
+			}
 		}
 	}
 	if !foundHigh {
-		t.Logf("Warning: hi-hat-like signal classified as %v (heuristic may need tuning)", types)
+		t.Logf("Warning: hi-hat-like signal classified as %v (heuristic may need tuning)", typeSets)
 	}
 }
 
@@ -103,8 +107,19 @@ func TestClassifyFromFeatures(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := classifyFromFeatures(tt.energy, tt.env)
-			if got != tt.expected {
-				t.Errorf("classifyFromFeatures() = %s, want %s", got, tt.expected)
+			if len(got) == 0 {
+				t.Fatal("classifyFromFeatures() returned empty slice")
+			}
+			// Check that expected type is among the returned types
+			found := false
+			for _, g := range got {
+				if g == tt.expected {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("classifyFromFeatures() = %v, want %s among results", got, tt.expected)
 			}
 		})
 	}
