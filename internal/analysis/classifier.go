@@ -49,7 +49,7 @@ func Classify(mono []float64, sampleRate int, onsets []int, cfg config.Classifie
 		spectrum := fft.FFTReal(frame)
 
 		// Compute band energies
-		energy := computeBandEnergy(spectrum, fftSize, sampleRate)
+		energy := computeBandEnergy(spectrum, fftSize, sampleRate, cfg)
 
 		// Compute temporal envelope features
 		env := computeEnvelope(mono, onset, sampleRate)
@@ -74,7 +74,7 @@ func extractFrame(mono []float64, start, size int) []float64 {
 }
 
 // computeBandEnergy computes the energy in different frequency bands from an FFT spectrum.
-func computeBandEnergy(spectrum []complex128, fftSize, sampleRate int) BandEnergy {
+func computeBandEnergy(spectrum []complex128, fftSize, sampleRate int, cfg config.ClassifierConfig) BandEnergy {
 	freqRes := float64(sampleRate) / float64(fftSize) // Hz per bin
 	var energy BandEnergy
 
@@ -84,19 +84,19 @@ func computeBandEnergy(spectrum []complex128, fftSize, sampleRate int) BandEnerg
 		power := mag * mag
 
 		switch {
-		case freq >= 20 && freq < 80:
+		case freq >= 20 && freq < cfg.FreqSubBass:
 			energy.SubBass += power
-		case freq >= 80 && freq < 200:
+		case freq >= cfg.FreqSubBass && freq < cfg.FreqBass:
 			energy.Bass += power
-		case freq >= 200 && freq < 600:
+		case freq >= cfg.FreqBass && freq < cfg.FreqLowMid:
 			energy.LowMid += power
-		case freq >= 600 && freq < 2000:
+		case freq >= cfg.FreqLowMid && freq < cfg.FreqMid:
 			energy.Mid += power
-		case freq >= 2000 && freq < 5000:
+		case freq >= cfg.FreqMid && freq < cfg.FreqHighMid:
 			energy.HighMid += power
-		case freq >= 5000 && freq < 10000:
+		case freq >= cfg.FreqHighMid && freq < cfg.FreqHigh:
 			energy.High += power
-		case freq >= 10000:
+		case freq >= cfg.FreqHigh:
 			energy.VeryHigh += power
 		}
 	}

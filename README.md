@@ -169,6 +169,14 @@ snare_bands = 4
 simultaneous_low = 0.30
 simultaneous_high = 0.15
 
+# Frequency band boundaries (Hz) — see "Frequency Band Boundaries" section below
+freq_sub_bass = 80
+freq_bass = 200
+freq_low_mid = 600
+freq_mid = 2000
+freq_high_mid = 5000
+freq_high = 10000
+
 [general]
 songs_dir = "~/Music/drum-hero"
 ```
@@ -252,6 +260,21 @@ The classifier thresholds are configurable in `[classifier]` and can be adjusted
 - **Too many false kicks?** Raise `kick_threshold` (try `0.60`).
 - **Snare eating everything?** Raise `snare_bands` to `5` or `6` to require a wider spectral spread before classifying as snare.
 - **Missing simultaneous hits?** Lower `simultaneous_high` (try `0.10`) to detect hi-hats layered with kicks more easily.
+
+### Frequency Band Boundaries
+
+The classifier splits the spectrum into 7 energy bands. The boundaries between these bands are also configurable:
+
+| Setting | Default | Band it defines |
+|---------|---------|----------------|
+| `freq_sub_bass` | 80 | SubBass: 20 Hz to this value |
+| `freq_bass` | 200 | Bass: sub_bass to this value |
+| `freq_low_mid` | 600 | LowMid: bass to this value |
+| `freq_mid` | 2000 | Mid: low_mid to this value |
+| `freq_high_mid` | 5000 | HighMid: mid to this value |
+| `freq_high` | 10000 | High: high_mid to this value; VeryHigh is everything above |
+
+Hi-hat and cymbal detection uses the **HighMid + High + VeryHigh** bands. If hi-hats still aren't being detected even with a low `hihat_threshold`, the energy is likely landing in the Mid band instead. Try lowering `freq_mid` (e.g. from `2000` to `1000`) to shift that energy into HighMid where it will count toward hi-hat classification.
 
 ## Project Structure
 

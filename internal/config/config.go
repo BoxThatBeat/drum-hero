@@ -92,6 +92,19 @@ type ClassifierConfig struct {
 	SimultaneousLow float64 `toml:"simultaneous_low"`
 	// SimultaneousHigh: high-frequency ratio for simultaneous kick+hihat detection (default 0.15)
 	SimultaneousHigh float64 `toml:"simultaneous_high"`
+
+	// Frequency band boundaries (Hz). These define the edges between the 7 energy bands
+	// used for classification: SubBass, Bass, LowMid, Mid, HighMid, High, VeryHigh.
+	// The "high" bands (HighMid + High + VeryHigh) are what trigger hi-hat/cymbal detection.
+	// If hi-hats aren't being detected, try lowering freq_high_mid to capture more energy
+	// in the high bands (e.g. 1000 instead of 2000).
+	FreqSubBass float64 `toml:"freq_sub_bass"` // upper edge of SubBass (default 80)
+	FreqBass    float64 `toml:"freq_bass"`     // upper edge of Bass (default 200)
+	FreqLowMid  float64 `toml:"freq_low_mid"`  // upper edge of LowMid (default 600)
+	FreqMid     float64 `toml:"freq_mid"`      // upper edge of Mid (default 2000)
+	FreqHighMid float64 `toml:"freq_high_mid"` // upper edge of HighMid (default 5000)
+	FreqHigh    float64 `toml:"freq_high"`     // upper edge of High (default 10000)
+	// VeryHigh captures everything above FreqHigh up to Nyquist.
 }
 
 // GeneralConfig holds general application settings.
@@ -131,6 +144,12 @@ func DefaultConfig() Config {
 			SnareBands:       4,
 			SimultaneousLow:  0.30,
 			SimultaneousHigh: 0.15,
+			FreqSubBass:      80,
+			FreqBass:         200,
+			FreqLowMid:       600,
+			FreqMid:          2000,
+			FreqHighMid:      5000,
+			FreqHigh:         10000,
 		},
 		General: GeneralConfig{
 			SongsDir: "~/Music/drum-hero",
@@ -242,7 +261,7 @@ custom_threshold_ms = 80
 drum_unmute_ms = 300
 
 [classifier]
-# Thresholds for drum hit classification. Changing these clears the cached drum map.
+# Thresholds for drum hit classification. Changing any value clears the cached drum map.
 # Lower hihat_threshold to detect more hi-hats/cymbals; raise to detect fewer.
 # Lower kick_threshold to detect more kicks; raise to require stronger bass.
 # Lower snare_bands to be more lenient with snare; raise to require broader spectrum.
@@ -251,6 +270,18 @@ hihat_threshold = 0.20
 snare_bands = 4
 simultaneous_low = 0.30
 simultaneous_high = 0.15
+
+# Frequency band boundaries (Hz). These define the 7 energy bands used for classification:
+#   SubBass [20 .. freq_sub_bass] | Bass [.. freq_bass] | LowMid [.. freq_low_mid]
+#   Mid [.. freq_mid] | HighMid [.. freq_high_mid] | High [.. freq_high] | VeryHigh [.. Nyquist]
+# Hi-hat/cymbal detection uses HighMid + High + VeryHigh. If hi-hats aren't detected,
+# try lowering freq_mid (e.g. 1000) to shift more energy into the "high" bands.
+freq_sub_bass = 80
+freq_bass = 200
+freq_low_mid = 600
+freq_mid = 2000
+freq_high_mid = 5000
+freq_high = 10000
 
 [general]
 songs_dir = "~/Music/drum-hero"
@@ -261,9 +292,11 @@ songs_dir = "~/Music/drum-hero"
 // Fingerprint returns a short hash of the classifier config values.
 // Used to detect when cached drum maps need re-analysis.
 func (c *ClassifierConfig) Fingerprint() string {
-	s := fmt.Sprintf("%.4f|%.4f|%d|%.4f|%.4f",
+	s := fmt.Sprintf("%.4f|%.4f|%d|%.4f|%.4f|%.1f|%.1f|%.1f|%.1f|%.1f|%.1f",
 		c.KickThreshold, c.HihatThreshold, c.SnareBands,
-		c.SimultaneousLow, c.SimultaneousHigh)
+		c.SimultaneousLow, c.SimultaneousHigh,
+		c.FreqSubBass, c.FreqBass, c.FreqLowMid,
+		c.FreqMid, c.FreqHighMid, c.FreqHigh)
 	h := sha256.Sum256([]byte(s))
 	return fmt.Sprintf("%x", h[:8])
 }
