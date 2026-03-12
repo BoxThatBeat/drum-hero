@@ -106,8 +106,8 @@ func (m *playModel) renderGame(width, height, highScore int, paused bool) string
 
 	// === Note highway ===
 	hudLines := 3     // HUD + blank
-	headerLines := 3  // headers + keys + sep
-	hitZoneLines := 3 // sep + indicators + sep
+	headerLines := 2  // headers + sep
+	hitZoneLines := 3 // sep + keys + sep
 	footerLines := 2  // sep + footer
 	highwayHeight := height - hudLines - headerLines - hitZoneLines - footerLines
 	if highwayHeight < 5 {
@@ -172,8 +172,6 @@ func (m *playModel) renderHUD(s *game.Score, highScore, width int) string {
 
 func (m *playModel) renderLaneHeaders() string {
 	var headers []string
-	var keys []string
-	drumToKey := m.cfg.DrumToKey()
 
 	for i, dt := range m.lanes {
 		vis := DrumVisuals[dt]
@@ -183,24 +181,14 @@ func (m *playModel) renderLaneHeaders() string {
 			Width(laneWidth).
 			Align(lipgloss.Center)
 
-		keyStyle := lipgloss.NewStyle().
-			Foreground(colorDim).
-			Width(laneWidth).
-			Align(lipgloss.Center)
-
 		if i > 0 {
 			headers = append(headers, m.styles.sepRendered)
-			keys = append(keys, m.styles.sepRendered)
 		}
 
 		headers = append(headers, style.Render(vis.Short))
-		keys = append(keys, keyStyle.Render(drumToKey[dt]))
 	}
 
-	headerLine := lipgloss.JoinHorizontal(lipgloss.Top, headers...)
-	keyLine := lipgloss.JoinHorizontal(lipgloss.Top, keys...)
-
-	return headerLine + "\n" + keyLine
+	return lipgloss.JoinHorizontal(lipgloss.Top, headers...)
 }
 
 func (m *playModel) renderSeparator(char string) string {
@@ -319,42 +307,39 @@ func (m *playModel) renderNoteChar(char string, slot noteSlot) string {
 
 func (m *playModel) renderHitZone() string {
 	hitResult, hitLane, hitFeedback := m.engine.LastHitFeedback()
+	drumToKey := m.cfg.DrumToKey()
 
 	// Top separator (hit zone boundary)
 	topSep := m.renderSeparator("═")
 	topLine := lipgloss.NewStyle().Foreground(colorBrightWhite).Bold(true).Render(topSep)
 
-	// Hit zone indicators
-	var hitParts []string
+	// Key labels with hit/miss flash feedback
+	var keyParts []string
 	for i, dt := range m.lanes {
-		vis := DrumVisuals[dt]
-		indicator := vis.Symbol
-
+		keyLabel := drumToKey[dt]
 		style := m.styles.laneCell
 
 		if hitFeedback > 0 && hitLane == dt {
 			if hitResult == game.HitCorrect {
-				style = style.Foreground(vis.Color).Bold(true)
-				indicator = "◈"
+				style = style.Foreground(colorBrightGreen).Bold(true)
 			} else {
 				style = style.Foreground(colorBrightRed).Bold(true)
-				indicator = "✗"
 			}
 		} else {
 			style = style.Foreground(colorDim)
 		}
 
 		if i > 0 {
-			hitParts = append(hitParts, m.styles.sepRendered)
+			keyParts = append(keyParts, m.styles.sepRendered)
 		}
-		hitParts = append(hitParts, style.Render(indicator))
+		keyParts = append(keyParts, style.Render(keyLabel))
 	}
-	hitLine := lipgloss.JoinHorizontal(lipgloss.Top, hitParts...)
+	keyLine := lipgloss.JoinHorizontal(lipgloss.Top, keyParts...)
 
 	// Bottom separator
 	botLine := lipgloss.NewStyle().Foreground(colorBrightWhite).Bold(true).Render(topSep)
 
-	return topLine + "\n" + hitLine + "\n" + botLine
+	return topLine + "\n" + keyLine + "\n" + botLine
 }
 
 // truncate truncates a string to maxLen, adding "..." if needed.
