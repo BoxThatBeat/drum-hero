@@ -92,16 +92,38 @@ func Analyze(hash string, cfg config.ClassifierConfig, onProgress audio.Progress
 	}
 
 	// Apply per-drum-type minimum interval filtering.
-	// For each drum type, drop hits that are too close to the previous hit of the same type.
+	// If a hit is too close to the previous hit of the same type, reassign it to
+	// whichever type has gone the longest without a hit. Every onset always produces
+	// at least one note — nothing is silently dropped.
+	allTypes := config.AllDrumTypes()
 	lastHitTime := make(map[config.DrumType]float64)
+	for _, dt := range allTypes {
+		lastHitTime[dt] = -1e9 // start with large negative so first hit always passes
+	}
 	var hits []DrumHit
 	for _, h := range allHits {
 		minMs := float64(cfg.MinIntervalMs(h.Type))
-		if prev, ok := lastHitTime[h.Type]; ok && h.TimeMs-prev < minMs {
+		if h.TimeMs-lastHitTime[h.Type] >= minMs {
+			// Passes interval check — keep as-is
+			hits = append(hits, h)
+			lastHitTime[h.Type] = h.TimeMs
 			continue
 		}
-		hits = append(hits, h)
-		lastHitTime[h.Type] = h.TimeMs
+
+		// Too close to previous hit of same type — reassign to the type
+		// that has gone the longest without a hit and passes its own interval.
+		bestType := h.Type
+		bestGap := -1.0
+		for _, dt := range allTypes {
+			gap := h.TimeMs - lastHitTime[dt]
+			dtMin := float64(cfg.MinIntervalMs(dt))
+			if gap >= dtMin && gap > bestGap {
+				bestGap = gap
+				bestType = dt
+			}
+		}
+		hits = append(hits, DrumHit{TimeMs: h.TimeMs, Type: bestType})
+		lastHitTime[bestType] = h.TimeMs
 	}
 
 	dm := &DrumMap{
