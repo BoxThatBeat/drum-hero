@@ -15,7 +15,7 @@ func TestClassify_KickLike(t *testing.T) {
 	mono := generateKickLike(totalFrames, sampleRate, atFrame)
 
 	// Detect the onset
-	onsets := DetectOnsets(mono, sampleRate)
+	onsets := DetectOnsets(mono, sampleRate, config.DefaultConfig().Classifier)
 	if len(onsets) == 0 {
 		t.Skip("onset detection didn't find the kick - skipping classification test")
 	}
@@ -45,7 +45,7 @@ func TestClassify_HiHatLike(t *testing.T) {
 
 	mono := generateHiHatLike(totalFrames, sampleRate, atFrame)
 
-	onsets := DetectOnsets(mono, sampleRate)
+	onsets := DetectOnsets(mono, sampleRate, config.DefaultConfig().Classifier)
 	if len(onsets) == 0 {
 		t.Skip("onset detection didn't find the hi-hat - skipping classification test")
 	}

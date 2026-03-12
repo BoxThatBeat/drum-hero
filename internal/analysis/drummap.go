@@ -73,22 +73,35 @@ func Analyze(hash string, cfg config.ClassifierConfig, onProgress audio.Progress
 
 	// Detect onsets
 	onProgress("Detecting drum hits...")
-	onsets := DetectOnsets(audioData.Mono, audioData.SampleRate)
+	onsets := DetectOnsets(audioData.Mono, audioData.SampleRate, cfg)
 
 	// Classify each onset (may return multiple types per onset for simultaneous hits)
 	onProgress(fmt.Sprintf("Classifying %d drum hits...", len(onsets)))
 	typeSets := Classify(audioData.Mono, audioData.SampleRate, onsets, cfg)
 
 	// Build drum map — expand multi-type onsets into separate DrumHit entries
-	var hits []DrumHit
+	var allHits []DrumHit
 	for i, onset := range onsets {
 		timeMs := float64(onset) / float64(audioData.SampleRate) * 1000.0
 		for _, dt := range typeSets[i] {
-			hits = append(hits, DrumHit{
+			allHits = append(allHits, DrumHit{
 				TimeMs: timeMs,
 				Type:   dt,
 			})
 		}
+	}
+
+	// Apply per-drum-type minimum interval filtering.
+	// For each drum type, drop hits that are too close to the previous hit of the same type.
+	lastHitTime := make(map[config.DrumType]float64)
+	var hits []DrumHit
+	for _, h := range allHits {
+		minMs := float64(cfg.MinIntervalMs(h.Type))
+		if prev, ok := lastHitTime[h.Type]; ok && h.TimeMs-prev < minMs {
+			continue
+		}
+		hits = append(hits, h)
+		lastHitTime[h.Type] = h.TimeMs
 	}
 
 	dm := &DrumMap{

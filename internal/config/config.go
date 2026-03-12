@@ -96,7 +96,7 @@ type ClassifierConfig struct {
 	// Frequency band boundaries (Hz). These define the edges between the 7 energy bands
 	// used for classification: SubBass, Bass, LowMid, Mid, HighMid, High, VeryHigh.
 	// The "high" bands (HighMid + High + VeryHigh) are what trigger hi-hat/cymbal detection.
-	// If hi-hats aren't being detected, try lowering freq_high_mid to capture more energy
+	// If hi-hats aren't being detected, try lowering freq_mid to capture more energy
 	// in the high bands (e.g. 1000 instead of 2000).
 	FreqSubBass float64 `toml:"freq_sub_bass"` // upper edge of SubBass (default 80)
 	FreqBass    float64 `toml:"freq_bass"`     // upper edge of Bass (default 200)
@@ -105,6 +105,38 @@ type ClassifierConfig struct {
 	FreqHighMid float64 `toml:"freq_high_mid"` // upper edge of HighMid (default 5000)
 	FreqHigh    float64 `toml:"freq_high"`     // upper edge of High (default 10000)
 	// VeryHigh captures everything above FreqHigh up to Nyquist.
+
+	// Onset detection parameters
+	OnsetFFTSize     int     `toml:"onset_fft_size"`     // FFT window size in samples (default 2048)
+	OnsetHopSize     int     `toml:"onset_hop_size"`     // samples between analysis frames (default 512)
+	OnsetThreshold   float64 `toml:"onset_threshold"`    // minimum spectral flux for an onset (default 0.30)
+	OnsetMedianWindow int    `toml:"onset_median_window"` // adaptive threshold median window size (default 7)
+
+	// Minimum interval (ms) between consecutive hits of each drum type.
+	// Lower = allows faster rolls/double hits; higher = merges close hits into one.
+	MinIntervalKickMs     int `toml:"min_interval_kick_ms"`      // default 30
+	MinIntervalSnareMs    int `toml:"min_interval_snare_ms"`     // default 30
+	MinIntervalClosedHHMs int `toml:"min_interval_closedhh_ms"`  // default 30
+	MinIntervalOpenHHMs   int `toml:"min_interval_openhh_ms"`    // default 50
+	MinIntervalCymbalMs   int `toml:"min_interval_cymbal_ms"`    // default 50
+}
+
+// MinIntervalMs returns the minimum interval for a given drum type.
+func (c *ClassifierConfig) MinIntervalMs(dt DrumType) int {
+	switch dt {
+	case Kick:
+		return c.MinIntervalKickMs
+	case Snare:
+		return c.MinIntervalSnareMs
+	case ClosedHH:
+		return c.MinIntervalClosedHHMs
+	case OpenHH:
+		return c.MinIntervalOpenHHMs
+	case Cymbal:
+		return c.MinIntervalCymbalMs
+	default:
+		return 30
+	}
 }
 
 // GeneralConfig holds general application settings.
@@ -150,6 +182,15 @@ func DefaultConfig() Config {
 			FreqMid:          2000,
 			FreqHighMid:      5000,
 			FreqHigh:         10000,
+			OnsetFFTSize:      2048,
+			OnsetHopSize:      512,
+			OnsetThreshold:    0.30,
+			OnsetMedianWindow: 7,
+			MinIntervalKickMs:     30,
+			MinIntervalSnareMs:    30,
+			MinIntervalClosedHHMs: 30,
+			MinIntervalOpenHHMs:   50,
+			MinIntervalCymbalMs:   50,
 		},
 		General: GeneralConfig{
 			SongsDir: "~/Music/drum-hero",
@@ -283,6 +324,20 @@ freq_mid = 2000
 freq_high_mid = 5000
 freq_high = 10000
 
+# Onset detection parameters
+onset_fft_size = 2048
+onset_hop_size = 512
+onset_threshold = 0.30
+onset_median_window = 7
+
+# Minimum interval (ms) between consecutive hits per drum type.
+# Lower = allows faster rolls/double hits. Try 20 for fast double kick.
+min_interval_kick_ms = 30
+min_interval_snare_ms = 30
+min_interval_closedhh_ms = 30
+min_interval_openhh_ms = 50
+min_interval_cymbal_ms = 50
+
 [general]
 songs_dir = "~/Music/drum-hero"
 `
@@ -292,11 +347,14 @@ songs_dir = "~/Music/drum-hero"
 // Fingerprint returns a short hash of the classifier config values.
 // Used to detect when cached drum maps need re-analysis.
 func (c *ClassifierConfig) Fingerprint() string {
-	s := fmt.Sprintf("%.4f|%.4f|%d|%.4f|%.4f|%.1f|%.1f|%.1f|%.1f|%.1f|%.1f",
+	s := fmt.Sprintf("%.4f|%.4f|%d|%.4f|%.4f|%.1f|%.1f|%.1f|%.1f|%.1f|%.1f|%d|%d|%.4f|%d|%d|%d|%d|%d|%d",
 		c.KickThreshold, c.HihatThreshold, c.SnareBands,
 		c.SimultaneousLow, c.SimultaneousHigh,
 		c.FreqSubBass, c.FreqBass, c.FreqLowMid,
-		c.FreqMid, c.FreqHighMid, c.FreqHigh)
+		c.FreqMid, c.FreqHighMid, c.FreqHigh,
+		c.OnsetFFTSize, c.OnsetHopSize, c.OnsetThreshold, c.OnsetMedianWindow,
+		c.MinIntervalKickMs, c.MinIntervalSnareMs, c.MinIntervalClosedHHMs,
+		c.MinIntervalOpenHHMs, c.MinIntervalCymbalMs)
 	h := sha256.Sum256([]byte(s))
 	return fmt.Sprintf("%x", h[:8])
 }

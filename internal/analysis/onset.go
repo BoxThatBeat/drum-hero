@@ -4,28 +4,22 @@ import (
 	"math"
 	"math/cmplx"
 
+	"github.com/boxthatbeat/drum-hero/internal/config"
 	"github.com/madelynnblue/go-dsp/fft"
 )
 
-const (
-	// defaultHopSize is the number of samples to advance between analysis frames.
-	defaultHopSize = 512
-	// defaultFFTSize is the FFT window size in samples.
-	defaultFFTSize = 2048
-	// defaultOnsetThreshold is the minimum spectral flux to count as an onset.
-	defaultOnsetThreshold = 0.3
-	// minOnsetIntervalMs is the minimum time between detected onsets in ms.
-	minOnsetIntervalMs = 30
-)
+// rawOnsetMinIntervalMs is a very small global minimum between raw onsets.
+// Per-drum-type intervals are applied after classification in the drum map builder.
+const rawOnsetMinIntervalMs = 10
 
 // DetectOnsets finds onset times (in sample frames) from mono audio using spectral flux.
-// Returns a slice of frame indices where onsets occur.
-func DetectOnsets(mono []float64, sampleRate int) []int {
-	return DetectOnsetsWithParams(mono, sampleRate, defaultFFTSize, defaultHopSize, defaultOnsetThreshold)
-}
+// Uses parameters from the classifier config.
+func DetectOnsets(mono []float64, sampleRate int, cfg config.ClassifierConfig) []int {
+	fftSize := cfg.OnsetFFTSize
+	hopSize := cfg.OnsetHopSize
+	threshold := cfg.OnsetThreshold
+	medianWindow := cfg.OnsetMedianWindow
 
-// DetectOnsetsWithParams detects onsets with configurable parameters.
-func DetectOnsetsWithParams(mono []float64, sampleRate, fftSize, hopSize int, threshold float64) []int {
 	if len(mono) < fftSize {
 		return nil
 	}
@@ -34,11 +28,11 @@ func DetectOnsetsWithParams(mono []float64, sampleRate, fftSize, hopSize int, th
 	flux := spectralFlux(mono, fftSize, hopSize)
 
 	// Adaptive thresholding: use a moving median + offset
-	medianWindow := 7
 	adaptiveThresh := adaptiveThreshold(flux, medianWindow, threshold)
 
 	// Peak picking: find local maxima above threshold
-	minIntervalFrames := int(float64(minOnsetIntervalMs) / 1000.0 * float64(sampleRate) / float64(hopSize))
+	// Use a small global min interval — per-type intervals are applied post-classification.
+	minIntervalFrames := int(float64(rawOnsetMinIntervalMs) / 1000.0 * float64(sampleRate) / float64(hopSize))
 	if minIntervalFrames < 1 {
 		minIntervalFrames = 1
 	}

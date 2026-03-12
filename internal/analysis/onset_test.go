@@ -3,6 +3,8 @@ package analysis
 import (
 	"math"
 	"testing"
+
+	"github.com/boxthatbeat/drum-hero/internal/config"
 )
 
 // generateSilenceWithImpulses creates a mono audio buffer with silence
@@ -59,7 +61,7 @@ func TestDetectOnsets_SimpleImpulses(t *testing.T) {
 	impulseFrames := []int{22050, 44100}
 	mono := generateSilenceWithImpulses(totalFrames, impulseFrames)
 
-	onsets := DetectOnsets(mono, sampleRate)
+	onsets := DetectOnsets(mono, sampleRate, config.DefaultConfig().Classifier)
 
 	if len(onsets) == 0 {
 		t.Fatal("expected to detect onsets, got none")
@@ -70,7 +72,7 @@ func TestDetectOnsets_SimpleImpulses(t *testing.T) {
 	// Onsets should be near our impulse positions (within a few hop sizes).
 	// The spectral flux algorithm quantizes to hop boundaries and has latency
 	// from the FFT window, so allow up to ~5 hop sizes of error.
-	tolerance := defaultHopSize * 5
+	tolerance := config.DefaultConfig().Classifier.OnsetHopSize * 5
 	for _, expected := range impulseFrames {
 		found := false
 		for _, onset := range onsets {
@@ -87,7 +89,7 @@ func TestDetectOnsets_SimpleImpulses(t *testing.T) {
 
 func TestDetectOnsets_EmptySignal(t *testing.T) {
 	mono := make([]float64, 44100) // 1 second of silence
-	onsets := DetectOnsets(mono, 44100)
+	onsets := DetectOnsets(mono, 44100, config.DefaultConfig().Classifier)
 	if len(onsets) != 0 {
 		t.Errorf("expected 0 onsets in silence, got %d", len(onsets))
 	}
@@ -95,7 +97,7 @@ func TestDetectOnsets_EmptySignal(t *testing.T) {
 
 func TestDetectOnsets_TooShort(t *testing.T) {
 	mono := make([]float64, 100) // Too short for FFT
-	onsets := DetectOnsets(mono, 44100)
+	onsets := DetectOnsets(mono, 44100, config.DefaultConfig().Classifier)
 	if onsets != nil {
 		t.Errorf("expected nil for too-short signal, got %v", onsets)
 	}

@@ -177,6 +177,19 @@ freq_mid = 2000
 freq_high_mid = 5000
 freq_high = 10000
 
+# Onset detection parameters
+onset_fft_size = 2048
+onset_hop_size = 512
+onset_threshold = 0.30
+onset_median_window = 7
+
+# Minimum interval (ms) between consecutive hits per drum type
+min_interval_kick_ms = 30
+min_interval_snare_ms = 30
+min_interval_closedhh_ms = 30
+min_interval_openhh_ms = 50
+min_interval_cymbal_ms = 50
+
 [general]
 songs_dir = "~/Music/drum-hero"
 ```
@@ -275,6 +288,36 @@ The classifier splits the spectrum into 7 energy bands. The boundaries between t
 | `freq_high` | 10000 | High: high_mid to this value; VeryHigh is everything above |
 
 Hi-hat and cymbal detection uses the **HighMid + High + VeryHigh** bands. If hi-hats still aren't being detected even with a low `hihat_threshold`, the energy is likely landing in the Mid band instead. Try lowering `freq_mid` (e.g. from `2000` to `1000`) to shift that energy into HighMid where it will count toward hi-hat classification.
+
+### Onset Detection
+
+These control how the spectral flux algorithm finds drum hit transients:
+
+| Setting | Default | What it controls |
+|---------|---------|-----------------|
+| `onset_fft_size` | 2048 | FFT window size in samples. Larger = better frequency resolution but worse time resolution. |
+| `onset_hop_size` | 512 | Samples between analysis frames. Smaller = finer time resolution but slower. |
+| `onset_threshold` | 0.30 | Minimum spectral flux to count as an onset. Lower = more sensitive (more hits detected, more false positives). |
+| `onset_median_window` | 7 | Adaptive threshold median window size. Larger = smoother threshold, may miss rapid hits. |
+
+### Per-Drum-Type Minimum Intervals
+
+These set the minimum time (ms) allowed between consecutive hits of the **same drum type**. If two hits of the same type are closer than this, the second is dropped. Different drums need different intervals — kicks can have fast double hits, while cymbals naturally ring longer.
+
+| Setting | Default | Drum |
+|---------|---------|------|
+| `min_interval_kick_ms` | 30 | Kick |
+| `min_interval_snare_ms` | 30 | Snare |
+| `min_interval_closedhh_ms` | 30 | Closed hi-hat |
+| `min_interval_openhh_ms` | 50 | Open hi-hat |
+| `min_interval_cymbal_ms` | 50 | Cymbal |
+
+**Common adjustments:**
+
+- **Fast double kick not showing both hits?** Lower `min_interval_kick_ms` to `20` or even `15`.
+- **Fast snare roll missing notes?** Lower `min_interval_snare_ms`.
+- **Too many spurious notes?** Raise `onset_threshold` (try `0.40`) or raise the per-type intervals.
+- **Missing quiet ghost notes?** Lower `onset_threshold` (try `0.15`).
 
 ## Project Structure
 
