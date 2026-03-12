@@ -3,8 +3,10 @@ package analysis
 import (
 	"math"
 	"math/cmplx"
+	"sort"
 
 	"github.com/boxthatbeat/drum-hero/internal/config"
+	"github.com/boxthatbeat/drum-hero/internal/logger"
 	"github.com/madelynnblue/go-dsp/fft"
 )
 
@@ -28,37 +30,146 @@ type BandEnergy struct {
 // Classify determines the drum type(s) for each onset based on spectral analysis.
 // Returns a slice of DrumType slices — each onset may produce multiple simultaneous types.
 func Classify(mono []float64, sampleRate int, onsets []int, cfg config.ClassifierConfig) [][]config.DrumType {
-	types := make([][]config.DrumType, len(onsets))
+	if len(onsets) == 0 {
+		return nil
+	}
+
 	windowSamples := int(float64(classifyWindowMs) / 1000.0 * float64(sampleRate))
-
-	// Use next power of 2 for FFT
 	fftSize := nextPow2(windowSamples)
-
 	window := hanningWindow(fftSize)
 
+	// Pre-compute spectra for all onsets
+	spectra := make([][]complex128, len(onsets))
 	for i, onset := range onsets {
-		// Extract window around onset
 		frame := extractFrame(mono, onset, fftSize)
-
-		// Apply window
 		for j := range frame {
 			frame[j] *= window[j]
 		}
+		spectra[i] = fft.FFTReal(frame)
+	}
 
-		// Compute FFT
-		spectrum := fft.FFTReal(frame)
+	// Adaptive calibration: analyze spectral centroids to find per-song boundaries
+	if cfg.AdaptiveCalibration {
+		cfg = calibrateBands(spectra, fftSize, sampleRate, cfg)
+	}
 
-		// Compute band energies
-		energy := computeBandEnergy(spectrum, fftSize, sampleRate, cfg)
-
-		// Compute temporal envelope features
+	// Classify each onset
+	types := make([][]config.DrumType, len(onsets))
+	for i, onset := range onsets {
+		energy := computeBandEnergy(spectra[i], fftSize, sampleRate, cfg)
 		env := computeEnvelope(mono, onset, sampleRate)
-
-		// Classify based on band energy ratios and envelope
 		types[i] = classifyFromFeatures(energy, env, cfg)
 	}
 
 	return types
+}
+
+// spectralCentroid computes the weighted average frequency of a spectrum.
+func spectralCentroid(spectrum []complex128, fftSize, sampleRate int) float64 {
+	freqRes := float64(sampleRate) / float64(fftSize)
+	var weightedSum, totalMag float64
+
+	for bin := 1; bin <= fftSize/2; bin++ {
+		freq := float64(bin) * freqRes
+		mag := cmplx.Abs(spectrum[bin])
+		weightedSum += freq * mag
+		totalMag += mag
+	}
+
+	if totalMag == 0 {
+		return 0
+	}
+	return weightedSum / totalMag
+}
+
+// calibrateBands analyzes all onsets' spectral centroids to find natural frequency
+// boundaries for this specific song. Returns a modified config with adjusted freq_* values.
+func calibrateBands(spectra [][]complex128, fftSize, sampleRate int, cfg config.ClassifierConfig) config.ClassifierConfig {
+	if len(spectra) < 10 {
+		// Not enough onsets to calibrate reliably
+		return cfg
+	}
+
+	// Compute spectral centroid for each onset
+	centroids := make([]float64, len(spectra))
+	for i, spec := range spectra {
+		centroids[i] = spectralCentroid(spec, fftSize, sampleRate)
+	}
+
+	// Sort centroids to find distribution
+	sorted := make([]float64, len(centroids))
+	copy(sorted, centroids)
+	sort.Float64s(sorted)
+
+	// Find natural clusters using percentile-based splits.
+	// Drums typically cluster into 3 groups: low (kick), mid (snare), high (hihat/cymbal).
+	// Use the gaps between percentile ranges to find boundaries.
+
+	// p25 = rough kick/snare boundary area, p65 = rough snare/hihat boundary area
+	p25 := sorted[len(sorted)*25/100]
+	p50 := sorted[len(sorted)*50/100]
+	p65 := sorted[len(sorted)*65/100]
+	p85 := sorted[len(sorted)*85/100]
+
+	// Find the largest gap in the sorted centroids around the snare/hihat boundary.
+	// Search between p50 and p85 for the biggest jump — that's likely where
+	// the snare-dominant region ends and hi-hat region begins.
+	bestGap := 0.0
+	bestGapFreq := 0.0
+	searchStart := len(sorted) * 40 / 100
+	searchEnd := len(sorted) * 90 / 100
+	if searchEnd >= len(sorted) {
+		searchEnd = len(sorted) - 1
+	}
+	for i := searchStart; i < searchEnd; i++ {
+		gap := sorted[i+1] - sorted[i]
+		if gap > bestGap {
+			bestGap = gap
+			bestGapFreq = (sorted[i] + sorted[i+1]) / 2
+		}
+	}
+
+	// Similarly find the kick/snare boundary gap in the lower range
+	bestLowGap := 0.0
+	bestLowGapFreq := 0.0
+	lowSearchEnd := len(sorted) * 50 / 100
+	for i := 0; i < lowSearchEnd; i++ {
+		gap := sorted[i+1] - sorted[i]
+		if gap > bestLowGap {
+			bestLowGap = gap
+			bestLowGapFreq = (sorted[i] + sorted[i+1]) / 2
+		}
+	}
+
+	logger.Log("[calibrate] %d onsets, centroid range: %.0f-%.0f Hz", len(centroids), sorted[0], sorted[len(sorted)-1])
+	logger.Log("[calibrate] percentiles: p25=%.0f p50=%.0f p65=%.0f p85=%.0f", p25, p50, p65, p85)
+	logger.Log("[calibrate] best mid/high gap: %.0f Hz (gap size: %.0f Hz)", bestGapFreq, bestGap)
+	logger.Log("[calibrate] best low/mid gap: %.0f Hz (gap size: %.0f Hz)", bestLowGapFreq, bestLowGap)
+
+	// Adjust freq_mid (the critical snare/hihat boundary) if we found a meaningful gap.
+	// A "meaningful" gap is at least 100 Hz wide — otherwise the distribution is too uniform.
+	if bestGap > 100 && bestGapFreq > 200 && bestGapFreq < float64(sampleRate)/2 {
+		logger.Log("[calibrate] adjusting freq_mid: %.0f -> %.0f Hz", cfg.FreqMid, bestGapFreq)
+		cfg.FreqMid = bestGapFreq
+	}
+
+	// Adjust freq_low_mid (kick/snare boundary) if we found a meaningful low gap
+	if bestLowGap > 50 && bestLowGapFreq > 50 && bestLowGapFreq < cfg.FreqMid {
+		logger.Log("[calibrate] adjusting freq_low_mid: %.0f -> %.0f Hz", cfg.FreqLowMid, bestLowGapFreq)
+		cfg.FreqLowMid = bestLowGapFreq
+	}
+
+	// Adjust freq_high_mid based on where the high-centroid onsets actually cluster
+	if p85 > cfg.FreqMid && p85 < float64(sampleRate)/2 {
+		// Set high_mid boundary between the mid/high gap and the p85
+		highMid := (bestGapFreq + p85) / 2
+		if highMid > cfg.FreqMid && highMid < cfg.FreqHigh {
+			logger.Log("[calibrate] adjusting freq_high_mid: %.0f -> %.0f Hz", cfg.FreqHighMid, highMid)
+			cfg.FreqHighMid = highMid
+		}
+	}
+
+	return cfg
 }
 
 // extractFrame extracts a window of samples starting at the given frame index.

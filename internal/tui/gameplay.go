@@ -90,7 +90,7 @@ func (m *playModel) renderGame(width, height, highScore int, paused bool) string
 	b.Grow(width * height) // rough pre-alloc
 
 	// === HUD (top bar) ===
-	hud := m.renderHUD(s, highScore, width)
+	hud := m.renderHUD(highScore, width)
 	b.WriteString(hud)
 	b.WriteString("\n")
 
@@ -121,12 +121,37 @@ func (m *playModel) renderGame(width, height, highScore int, paused bool) string
 	hitZone := m.renderHitZone()
 	b.WriteString(hitZone)
 
-	// === Footer ===
-	b.WriteString("\n")
+	// === Footer with score block on the right ===
+	var footerLeft string
 	if paused {
-		b.WriteString(dimStyle.Render(" [ESC] Resume  [Q] Quit to menu"))
+		footerLeft = dimStyle.Render(" [ESC] Resume  [Q] Quit to menu")
 	} else {
-		b.WriteString(dimStyle.Render(" [ESC] Pause"))
+		footerLeft = dimStyle.Render(" [ESC] Pause")
+	}
+	scoreBlock := m.renderScoreBlock(s)
+	scoreLines := strings.Split(scoreBlock, "\n")
+
+	// Pad footer to 2 lines (score + streak), with score block right-aligned
+	for i := 0; i < 2; i++ {
+		var left string
+		if i == 0 {
+			left = footerLeft
+		}
+		var right string
+		if i < len(scoreLines) {
+			right = scoreLines[i] + " "
+		}
+
+		gap := width - lipgloss.Width(left) - lipgloss.Width(right)
+		if gap < 1 {
+			gap = 1
+		}
+		if i > 0 {
+			b.WriteString("\n")
+		} else {
+			b.WriteString("\n")
+		}
+		b.WriteString(left + strings.Repeat(" ", gap) + right)
 	}
 
 	result := b.String()
@@ -142,12 +167,19 @@ func (m *playModel) renderGame(width, height, highScore int, paused bool) string
 	return result
 }
 
-func (m *playModel) renderHUD(s *game.Score, highScore, width int) string {
-	song := titleStyle.Render(truncate(m.songName, 30))
+func (m *playModel) renderHUD(highScore, width int) string {
+	left := fmt.Sprintf(" %s", titleStyle.Render(truncate(m.songName, 30)))
+	right := highScoreStyle.Render(fmt.Sprintf("High: %d ", highScore))
 
-	scoreText := fmt.Sprintf("%s %d", scoreStyle.Render("Score:"), s.Points)
-	streakText := fmt.Sprintf("%s %d", streakStyle.Render("Streak:"), s.Streak)
+	gap := width - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 1 {
+		gap = 1
+	}
 
+	return left + strings.Repeat(" ", gap) + right
+}
+
+func (m *playModel) renderScoreBlock(s *game.Score) string {
 	multColor := colorBrightWhite
 	if s.Multiplier >= 8 {
 		multColor = colorBrightRed
@@ -159,15 +191,10 @@ func (m *playModel) renderHUD(s *game.Score, highScore, width int) string {
 	multText := lipgloss.NewStyle().Bold(true).Foreground(multColor).Render(
 		fmt.Sprintf("%dx", s.Multiplier))
 
-	left := fmt.Sprintf(" %s  %s  %s  %s", song, scoreText, streakText, multText)
-	right := highScoreStyle.Render(fmt.Sprintf("High: %d ", highScore))
+	scoreText := fmt.Sprintf("%s %d", scoreStyle.Render("Score:"), s.Points)
+	streakText := fmt.Sprintf("%s %d  %s", streakStyle.Render("Streak:"), s.Streak, multText)
 
-	gap := width - lipgloss.Width(left) - lipgloss.Width(right)
-	if gap < 1 {
-		gap = 1
-	}
-
-	return left + strings.Repeat(" ", gap) + right
+	return scoreText + "\n" + streakText
 }
 
 func (m *playModel) renderLaneHeaders() string {

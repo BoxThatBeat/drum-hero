@@ -112,6 +112,11 @@ type ClassifierConfig struct {
 	OnsetThreshold   float64 `toml:"onset_threshold"`    // minimum spectral flux for an onset (default 0.30)
 	OnsetMedianWindow int    `toml:"onset_median_window"` // adaptive threshold median window size (default 7)
 
+	// AdaptiveCalibration: when true, the classifier analyzes all onsets in the song
+	// first to find the natural frequency distribution, then adjusts the band boundaries
+	// per-song. The configured freq_* values are used as fallbacks. (default true)
+	AdaptiveCalibration bool `toml:"adaptive_calibration"`
+
 	// Minimum interval (ms) between consecutive hits of each drum type.
 	// Lower = allows faster rolls/double hits; higher = merges close hits into one.
 	MinIntervalKickMs     int `toml:"min_interval_kick_ms"`      // default 30
@@ -313,11 +318,12 @@ snare_bands = 4
 simultaneous_low = 0.30
 simultaneous_high = 0.15
 
-# Frequency band boundaries (Hz). These define the 7 energy bands used for classification:
-#   SubBass [20 .. freq_sub_bass] | Bass [.. freq_bass] | LowMid [.. freq_low_mid]
-#   Mid [.. freq_mid] | HighMid [.. freq_high_mid] | High [.. freq_high] | VeryHigh [.. Nyquist]
-# Hi-hat/cymbal detection uses HighMid + High + VeryHigh. If hi-hats aren't detected,
-# try lowering freq_mid (e.g. 1000) to shift more energy into the "high" bands.
+# Adaptive calibration: analyze all onsets per-song to find natural frequency
+# boundaries. When enabled, freq_* values are used as fallbacks only.
+adaptive_calibration = true
+
+# Frequency band boundaries (Hz). Used as fallbacks when adaptive_calibration is off,
+# or as starting points when it's on.
 freq_sub_bass = 80
 freq_bass = 200
 freq_low_mid = 600
@@ -348,12 +354,13 @@ songs_dir = "~/Music/drum-hero"
 // Fingerprint returns a short hash of the classifier config values.
 // Used to detect when cached drum maps need re-analysis.
 func (c *ClassifierConfig) Fingerprint() string {
-	s := fmt.Sprintf("%.4f|%.4f|%d|%.4f|%.4f|%.1f|%.1f|%.1f|%.1f|%.1f|%.1f|%d|%d|%.4f|%d|%d|%d|%d|%d|%d",
+	s := fmt.Sprintf("%.4f|%.4f|%d|%.4f|%.4f|%.1f|%.1f|%.1f|%.1f|%.1f|%.1f|%d|%d|%.4f|%d|%t|%d|%d|%d|%d|%d",
 		c.KickThreshold, c.HihatThreshold, c.SnareBands,
 		c.SimultaneousLow, c.SimultaneousHigh,
 		c.FreqSubBass, c.FreqBass, c.FreqLowMid,
 		c.FreqMid, c.FreqHighMid, c.FreqHigh,
 		c.OnsetFFTSize, c.OnsetHopSize, c.OnsetThreshold, c.OnsetMedianWindow,
+		c.AdaptiveCalibration,
 		c.MinIntervalKickMs, c.MinIntervalSnareMs, c.MinIntervalClosedHHMs,
 		c.MinIntervalOpenHHMs, c.MinIntervalCymbalMs)
 	h := sha256.Sum256([]byte(s))

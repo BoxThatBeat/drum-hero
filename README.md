@@ -177,6 +177,9 @@ freq_mid = 2000
 freq_high_mid = 5000
 freq_high = 10000
 
+# Adaptive calibration — auto-adjusts band boundaries per song
+adaptive_calibration = true
+
 # Onset detection parameters
 onset_fft_size = 2048
 onset_hop_size = 512
@@ -288,6 +291,16 @@ The classifier splits the spectrum into 7 energy bands. The boundaries between t
 | `freq_high` | 10000 | High: high_mid to this value; VeryHigh is everything above |
 
 Hi-hat and cymbal detection uses the **HighMid + High + VeryHigh** bands. If hi-hats still aren't being detected even with a low `hihat_threshold`, the energy is likely landing in the Mid band instead. Try lowering `freq_mid` (e.g. from `2000` to `1000`) to shift that energy into HighMid where it will count toward hi-hat classification.
+
+### Adaptive Calibration
+
+| Setting | Default | What it controls |
+|---------|---------|-----------------|
+| `adaptive_calibration` | true | When enabled, the classifier analyzes all detected onsets in the song before classifying them, computing spectral centroids to find the natural frequency distribution. It then adjusts band boundaries (`freq_mid`, `freq_low_mid`, `freq_high_mid`) per-song based on where the largest gaps in the centroid distribution fall. The configured `freq_*` values are used as fallbacks when calibration is off or when there aren't enough onsets (< 10) to calibrate reliably. |
+
+This is useful because drum recordings vary widely — a jazz kit recorded with close mics will have very different frequency characteristics than a metal kit with triggered samples. Adaptive calibration finds the natural kick/snare and snare/hi-hat boundaries for each song automatically.
+
+Set `adaptive_calibration = false` to use the fixed `freq_*` values directly if you prefer manual control.
 
 ### Onset Detection
 
