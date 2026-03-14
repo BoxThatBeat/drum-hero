@@ -168,7 +168,7 @@ func (m *menuModel) view(width, height, highScore int) string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(dimStyle.Render("  [Enter] Play  [j/k] Navigate  [q] Quit"))
+	b.WriteString(dimStyle.Render("  [Enter] Play  [p] Process All  [j/k] Navigate  [q] Quit"))
 
 	return lipgloss.Place(width, height, lipgloss.Left, lipgloss.Top, b.String())
 }

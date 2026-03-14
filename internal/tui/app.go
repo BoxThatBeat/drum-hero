@@ -39,6 +39,9 @@ type returnToMenuMsg struct {
 	generation int
 }
 
+// batchDoneMsg is sent when batch processing completes (or is cancelled).
+type batchDoneMsg struct{}
+
 // progressCollector safely collects progress messages from a background goroutine.
 type progressCollector struct {
 	mu       sync.Mutex
@@ -72,6 +75,7 @@ type App struct {
 	loading loadingModel
 	play    playModel
 	results resultsModel
+	batch   batchModel
 
 	// Song being processed/played
 	songPath string
@@ -162,6 +166,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a.updatePaused(msg)
 	case game.StateResults:
 		return a.updateResults(msg)
+	case game.StateBatchProcessing:
+		return a.updateBatchProcessing(msg)
 	}
 
 	return a, nil
@@ -182,6 +188,8 @@ func (a *App) View() tea.View {
 		content = a.play.viewWithPause(a.width, a.height, a.scoreboard.HighScore())
 	case game.StateResults:
 		content = a.results.view(a.width, a.height)
+	case game.StateBatchProcessing:
+		content = a.batch.view(a.width, a.height)
 	default:
 		content = "Unknown state"
 	}
@@ -213,6 +221,17 @@ func (a *App) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return a, tea.Batch(
 					a.tickCmd(),
 					a.loadSongCmd(selected),
+				)
+			}
+		case "p":
+			if len(a.menu.songs) > 0 && a.menu.demucsOk {
+				logger.Log("[Menu] starting batch processing for %d songs", len(a.menu.songs))
+				a.batch = newBatchModel(a.menu.songs, a.cfg.Classifier)
+				a.state = game.StateBatchProcessing
+				a.progress = &progressCollector{}
+				return a, tea.Batch(
+					a.tickCmd(),
+					a.batchProcessCmd(),
 				)
 			}
 		case "up", "k":
@@ -356,6 +375,37 @@ func (a *App) updateResults(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return a, nil
 }
 
+func (a *App) updateBatchProcessing(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyPressMsg:
+		key := msg.String()
+		if key == "q" || key == "esc" {
+			if a.batch.done {
+				a.state = game.StateMenu
+				return a, nil
+			}
+			// Signal cancellation
+			logger.Log("[Batch] user cancelled")
+			a.batch.cancelled.Store(true)
+			return a, nil
+		}
+		if key == "enter" && a.batch.done {
+			a.state = game.StateMenu
+			return a, nil
+		}
+	case batchDoneMsg:
+		a.batch.done = true
+		return a, a.tickCmd()
+	case tickMsg:
+		for _, msg := range a.progress.drain() {
+			a.batch.addMessage(msg)
+		}
+		a.batch.tick()
+		return a, a.tickCmd()
+	}
+	return a, nil
+}
+
 // --- Commands ---
 
 func (a *App) tickCmd() tea.Cmd {
@@ -389,6 +439,93 @@ func (a *App) loadSongCmd(path string) tea.Cmd {
 		logger.Log("[loadSongCmd] Analyze OK: %d hits", len(drumMap.Hits))
 
 		return songLoadedMsg{hash: hash, drumMap: drumMap}
+	}
+}
+
+func (a *App) batchProcessCmd() tea.Cmd {
+	pc := a.progress
+	batch := &a.batch
+	classifierCfg := a.cfg.Classifier
+	fingerprint := classifierCfg.Fingerprint()
+
+	return func() tea.Msg {
+		logger.Log("[batchProcessCmd] starting batch for %d songs", len(batch.songs))
+
+		for i := range batch.songs {
+			if batch.cancelled.Load() {
+				pc.add("Batch cancelled by user")
+				break
+			}
+
+			song := &batch.songs[i]
+			song.status = songProcessing
+			pc.add(fmt.Sprintf("[%d/%d] Checking: %s", i+1, len(batch.songs), song.name))
+
+			// Hash the file
+			hasSep, hasDM, hash, err := checkSongCache(song.path, fingerprint)
+			if err != nil {
+				logger.Log("[batchProcessCmd] hash error for %s: %v", song.name, err)
+				song.status = songFailed
+				song.detail = err.Error()
+				batch.failed++
+				pc.add(fmt.Sprintf("[%d/%d] Failed to hash: %s", i+1, len(batch.songs), song.name))
+				continue
+			}
+
+			// If both cached, skip
+			if hasSep && hasDM {
+				song.status = songSkipped
+				batch.skipped++
+				pc.add(fmt.Sprintf("[%d/%d] Cached: %s", i+1, len(batch.songs), song.name))
+				continue
+			}
+
+			// Run separation if needed
+			if !hasSep {
+				pc.add(fmt.Sprintf("[%d/%d] Separating: %s", i+1, len(batch.songs), song.name))
+				onProgress := func(msg string) {
+					pc.add(msg)
+				}
+				hash, err = audio.Separate(song.path, onProgress)
+				if err != nil {
+					logger.Log("[batchProcessCmd] separate error for %s: %v", song.name, err)
+					song.status = songFailed
+					song.detail = fmt.Sprintf("separation: %s", err)
+					batch.failed++
+					pc.add(fmt.Sprintf("[%d/%d] Separation failed: %s", i+1, len(batch.songs), song.name))
+					continue
+				}
+			} else {
+				pc.add(fmt.Sprintf("[%d/%d] Separation cached: %s", i+1, len(batch.songs), song.name))
+			}
+
+			// Run analysis if needed
+			if !hasDM {
+				pc.add(fmt.Sprintf("[%d/%d] Analyzing: %s", i+1, len(batch.songs), song.name))
+				onProgress := func(msg string) {
+					pc.add(msg)
+				}
+				_, err = analysis.Analyze(hash, classifierCfg, onProgress)
+				if err != nil {
+					logger.Log("[batchProcessCmd] analyze error for %s: %v", song.name, err)
+					song.status = songFailed
+					song.detail = fmt.Sprintf("analysis: %s", err)
+					batch.failed++
+					pc.add(fmt.Sprintf("[%d/%d] Analysis failed: %s", i+1, len(batch.songs), song.name))
+					continue
+				}
+			} else {
+				pc.add(fmt.Sprintf("[%d/%d] Analysis cached: %s", i+1, len(batch.songs), song.name))
+			}
+
+			song.status = songDone
+			batch.processed++
+			pc.add(fmt.Sprintf("[%d/%d] Done: %s", i+1, len(batch.songs), song.name))
+		}
+
+		logger.Log("[batchProcessCmd] batch complete: %d processed, %d skipped, %d failed",
+			batch.processed, batch.skipped, batch.failed)
+		return batchDoneMsg{}
 	}
 }
 

@@ -4,11 +4,12 @@ package game
 type State int
 
 const (
-	StateMenu    State = iota // Song selection menu
-	StateLoading              // Processing song (demucs + analysis)
-	StatePlaying              // Gameplay in progress
-	StatePaused               // Gameplay paused
-	StateResults              // Showing results after song ends
+	StateMenu            State = iota // Song selection menu
+	StateLoading                      // Processing song (demucs + analysis)
+	StatePlaying                      // Gameplay in progress
+	StatePaused                       // Gameplay paused
+	StateResults                      // Showing results after song ends
+	StateBatchProcessing              // Batch processing all songs
 )
 
 // String returns a human-readable name for the state.
@@ -24,6 +25,8 @@ func (s State) String() string {
 		return "Paused"
 	case StateResults:
 		return "Results"
+	case StateBatchProcessing:
+		return "BatchProcessing"
 	default:
 		return "Unknown"
 	}
